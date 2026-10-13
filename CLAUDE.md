@@ -83,7 +83,7 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
       `src/slic3r/GUI/LivePrintTracker.*` (position source → move matcher → timer),
       `GLCanvas3D::toggle_live_print_follow` / `_apply_live_print_move`, and
       `get_moves_slider_value_for_move` in both renderers. Press **L** in Preview to
-      follow a simulated print (`CREALITY_LIVE_SIM_SPEED`, default 10x); arrow keys
+      follow a simulated print (`CREALITY_LIVE_SIM_SPEED`, default real time); arrow keys
       or L stop it. Next: compile and test, then a real source from the port-9999
       websocket (`curPosition`).
 

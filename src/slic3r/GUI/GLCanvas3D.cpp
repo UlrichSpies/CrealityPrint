@@ -11297,8 +11297,8 @@ void GLCanvas3D::toggle_live_print_follow()
     }
 
     // No printer connection yet: follow a simulated print of the previewed G-code.
-    // CREALITY_LIVE_SIM_SPEED sets how many times faster than real time it runs.
-    double speed = 10.0;
+    // Runs in real time; CREALITY_LIVE_SIM_SPEED (e.g. 10) speeds it up for testing.
+    double speed = 1.0;
     if (const char* env = std::getenv("CREALITY_LIVE_SIM_SPEED")) {
         const double value = std::atof(env);
         if (value > 0.0)
