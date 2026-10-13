@@ -66,6 +66,7 @@ class Bed3D;
 class PartPlateList;
 class ImGuiFilamentPanel;
 class PrintSettingsPanel;
+class LivePrintTracker;
 
 #if ENABLE_RETINA_GL
 class RetinaHelper;
@@ -708,7 +709,11 @@ private:
     };
     // ==== easy print mode related ====
     std::unique_ptr<ImGuiFilamentPanel> m_imgui_filament_panel;
-    std::unique_ptr<PrintSettingsPanel> m_print_settings_panel; 
+    std::unique_ptr<PrintSettingsPanel> m_print_settings_panel;
+    // Live print preview: follows the printer in the preview sliders.
+    std::unique_ptr<LivePrintTracker> m_live_print_tracker;
+    // Move the preview should seek to, applied by _apply_live_print_move() while rendering.
+    std::optional<size_t> m_live_print_move;
     mutable ResidentFilamentPanelLayoutState m_resident_filament_layout_state;
     ResidentFilamentPanelResizeState         m_resident_filament_resize_state;
     mutable float m_top_prefix_width_px = 0.0f;           // width of inline preset block (same row, before toolbar)
@@ -1231,6 +1236,13 @@ public:
     void msw_rescale();
 
     void request_extra_frame() { m_extra_frame_requested = true; }
+
+    // Live print preview (preview canvas only).
+    void toggle_live_print_follow();
+    void stop_live_print_follow();
+    bool is_live_print_following() const;
+    // Seek the preview sliders so they end at move_id (index into GCodeProcessorResult::moves).
+    void set_live_print_move(size_t move_id);
     void request_extra_frames(int count) { if (count > 0) m_extra_frames_to_render = std::max(m_extra_frames_to_render, count); }
 
     void schedule_extra_frame(int miliseconds);
@@ -1395,6 +1407,7 @@ private:
     void _render_objects(GLVolumeCollection::ERenderType type, bool with_outline = true);
     // BBS: GUI refactor: add canvas size as parameters
     void _render_gcode(int canvas_width, int canvas_height);
+    void _apply_live_print_move();
     void _render_cliper(int canvas_width, int canvas_height);
     // BBS: render a plane for assemble
     void _render_plane() const;

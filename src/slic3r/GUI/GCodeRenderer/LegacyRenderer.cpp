@@ -3516,7 +3516,21 @@ void LegacyRenderer::update_marker_curr_move()
 #endif
 }
 
-bool LegacyRenderer::is_extrusion_role_visible(ExtrusionRole role) const 
+int LegacyRenderer::get_moves_slider_value_for_move(size_t move_id) const
+{
+    const SequentialView& view = m_sequential_view;
+    if (view.endpoints.last < view.endpoints.first || view.endpoints.last >= m_sid_to_moveid.size())
+        return -1;
+
+    // Slider value v shows s_ids up to endpoints.first + v, and s_ids are in move order,
+    // so find the last s_id whose move is not after move_id.
+    const auto begin = m_sid_to_moveid.begin() + view.endpoints.first;
+    const auto end   = m_sid_to_moveid.begin() + view.endpoints.last + 1;
+    const auto it    = std::upper_bound(begin, end, move_id);
+    return it == begin ? 0 : static_cast<int>(std::distance(begin, it) - 1);
+}
+
+bool LegacyRenderer::is_extrusion_role_visible(ExtrusionRole role) const
 {
 	return is_visible(role); 
 }

@@ -210,6 +210,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/HybridVertexBuffer.cpp
     GUI/GCodeViewer.hpp
     GUI/GCodeViewer.cpp
+    GUI/LivePrintTracker.hpp
+    GUI/LivePrintTracker.cpp
     GUI/Preferences.cpp
     GUI/Preferences.hpp
     GUI/ConfigRelateDialog.cpp

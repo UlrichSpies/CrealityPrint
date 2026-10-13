@@ -73,6 +73,8 @@ public:
     void update_moves_slider(bool set_to_max = false);
     void update_layers_slider_mode();
     void update_marker_curr_move();
+    int get_moves_slider_value_for_move(size_t move_id) const;
+    const GCodeProcessorResult* get_gcode_result() const;
 
     bool is_contained_in_bed() const;
     bool is_only_gcode_in_preview() const;

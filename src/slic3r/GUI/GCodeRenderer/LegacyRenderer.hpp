@@ -462,6 +462,7 @@ public:
     void set_toolpath_move_type_visible(EMoveType type, bool visible) override;
 
 	void update_marker_curr_move() override;
+	int get_moves_slider_value_for_move(size_t move_id) const override;
     /*bool is_move_type_visible(EMoveType type) const override;
     void set_move_type_visible(EMoveType type, bool visible) override;
 	uint32_t get_extrusion_role_visibility_flags() const override;

@@ -768,6 +768,33 @@ namespace Slic3r
             {
             }
 
+            int AdvancedRenderer::get_moves_slider_value_for_move(size_t move_id) const
+            {
+                if (!m_p_layer_manager || m_p_layer_manager->empty()) {
+                    return -1;
+                }
+                const auto& t_layer = m_p_layer_manager->get_layer(m_p_layer_manager->get_current_layer_end());
+                if (!t_layer.is_valid()) {
+                    return -1;
+                }
+                // Slider value v shows the visible segments up to v, and their move ids increase with v,
+                // so find the last value whose move is not after move_id.
+                int lo = 0;
+                int hi = static_cast<int>(t_layer.get_visible_segment_list().size());
+                if (t_layer.get_current_move_id(lo) > move_id) {
+                    return lo;
+                }
+                while (lo < hi) {
+                    const int mid = lo + (hi - lo + 1) / 2;
+                    if (t_layer.get_current_move_id(mid) <= move_id) {
+                        lo = mid;
+                    } else {
+                        hi = mid - 1;
+                    }
+                }
+                return lo;
+            }
+
             bool AdvancedRenderer::load_toolpaths(const GCodeProcessorResult& gcode_result, const BuildVolume& build_volume, const std::vector<BoundingBoxf3>& exclude_bounding_box)
             {
                 const auto t_move_count = gcode_result.moves.size();

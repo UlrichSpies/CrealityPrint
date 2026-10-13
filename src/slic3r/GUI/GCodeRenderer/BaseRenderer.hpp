@@ -533,6 +533,10 @@ public:
     virtual void update_moves_slider(bool set_to_max = false);
     void update_layers_slider_mode();
     virtual void update_marker_curr_move();
+    // Live print preview: moves slider value that shows the top layer up to move_id (index into
+    // GCodeProcessorResult::moves), clamped to the top layer. -1 if the renderer has no moves loaded.
+    virtual int get_moves_slider_value_for_move(size_t move_id) const { return -1; }
+    const GCodeProcessorResult* get_gcode_result() const { return m_gcode_result; }
 
     bool is_contained_in_bed() const { return m_contained_in_bed; }
  

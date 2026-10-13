@@ -369,6 +369,24 @@ void GCodeViewer::update_marker_curr_move()
     }
 }
 
+int GCodeViewer::get_moves_slider_value_for_move(size_t move_id) const
+{
+    const auto& p_renderer = get_renderer();
+    if (p_renderer) {
+        return p_renderer->get_moves_slider_value_for_move(move_id);
+    }
+    return -1;
+}
+
+const GCodeProcessorResult* GCodeViewer::get_gcode_result() const
+{
+    const auto& p_renderer = get_renderer();
+    if (p_renderer) {
+        return p_renderer->get_gcode_result();
+    }
+    return nullptr;
+}
+
 bool GCodeViewer::is_contained_in_bed() const
 {
 	const auto& p_renderer = get_renderer();

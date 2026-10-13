@@ -4,6 +4,8 @@
 
 #include <igl/unproject.h>
 
+#include <cstdlib>
+
 #include "libslic3r/BuildVolume.hpp"
 #include "libslic3r/ClipperUtils.hpp"
 #include "libslic3r/PrintConfig.hpp"
@@ -37,6 +39,7 @@
 #include "Mouse3DController.hpp"
 #include "I18N.hpp"
 #include "NotificationManager.hpp"
+#include "LivePrintTracker.hpp"
 #include "format.hpp"
 #include "DailyTips.hpp"
 #include "Widgets/NumberEntryDialog.hpp"
@@ -4157,6 +4160,12 @@ void GLCanvas3D::on_char(wxKeyEvent& evt)
         }
         // case 'K':
         // case 'k': { wxGetApp().plater()->get_camera().select_next_type(); m_dirty = true; break; }
+        case 'L':
+        case 'l': {
+            if (m_canvas_type == CanvasPreview)
+                toggle_live_print_follow();
+            break;
+        }
         // case 'L':
         // case 'l': {
         // if (!m_main_toolbar.is_enabled()) {
@@ -4492,6 +4501,10 @@ void GLCanvas3D::on_key(wxKeyEvent& evt)
                         IMSlider* m_layers_slider = get_gcode_viewer().get_layers_slider();
                         IMSlider* m_moves_slider  = get_gcode_viewer().get_moves_slider();
                         int       increment       = (evt.CmdDown() || evt.ShiftDown()) ? 5 : 1;
+                        // Moving the sliders by hand takes over from the live print preview.
+                        if (keyCode == WXK_UP || keyCode == WXK_DOWN || keyCode == WXK_LEFT || keyCode == WXK_RIGHT ||
+                            keyCode == WXK_HOME || keyCode == WXK_END)
+                            stop_live_print_follow();
                         if (wxGetApp().obj_list()->get_object_list_window_focus()) {
                             wxGetApp().obj_list()->on_key(evt);
                         } else if ((evt.CmdDown() || evt.ShiftDown()) && evt.GetKeyCode() == 'G') {
@@ -11236,6 +11249,9 @@ void GLCanvas3D::_render_gcode(int canvas_width, int canvas_height)
     if (!m_gcode_viewer.get_loaded())
         return;
     m_gcode_viewer.render(canvas_width, canvas_height);
+    // After render(), which rebuilds the moves slider when the layer changed, and before the
+    // dirty sliders below are applied to the view.
+    _apply_live_print_move();
     IMSlider* layers_slider = m_gcode_viewer.get_layers_slider();
     IMSlider* moves_slider  = m_gcode_viewer.get_moves_slider();
 
@@ -11264,6 +11280,101 @@ void GLCanvas3D::_render_gcode(int canvas_width, int canvas_height)
         post_event(SimpleEvent(EVT_GLCANVAS_UPDATE));
         m_gcode_viewer.update_marker_curr_move();
     }
+}
+
+void GLCanvas3D::toggle_live_print_follow()
+{
+    if (is_live_print_following()) {
+        stop_live_print_follow();
+        return;
+    }
+
+    if (!m_live_print_tracker) {
+        m_live_print_tracker = std::make_unique<LivePrintTracker>(
+            [this]() { return m_gcode_viewer.get_gcode_result(); },
+            [this](size_t move_id) { set_live_print_move(move_id); });
+    }
+
+    // No printer connection yet: follow a simulated print of the previewed G-code.
+    // CREALITY_LIVE_SIM_SPEED sets how many times faster than real time it runs.
+    double speed = 10.0;
+    if (const char* env = std::getenv("CREALITY_LIVE_SIM_SPEED")) {
+        const double value = std::atof(env);
+        if (value > 0.0)
+            speed = value;
+    }
+    m_live_print_tracker->start([speed](const GCodeProcessorResult& result) {
+        return std::make_unique<SimulatedPrintSource>(result, speed);
+    });
+
+    wxGetApp().plater()->get_notification_manager()->push_notification(
+        NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel,
+        (boost::format("Live print preview: following a simulated printer (x%1%). Press L or an arrow key to stop.") % speed).str());
+}
+
+void GLCanvas3D::stop_live_print_follow()
+{
+    if (!is_live_print_following())
+        return;
+    m_live_print_tracker->stop();
+    m_live_print_move.reset();
+    wxGetApp().plater()->get_notification_manager()->push_notification(
+        NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel,
+        "Live print preview stopped.");
+}
+
+bool GLCanvas3D::is_live_print_following() const
+{
+    return m_live_print_tracker && m_live_print_tracker->is_running();
+}
+
+void GLCanvas3D::set_live_print_move(size_t move_id)
+{
+    m_live_print_move = move_id;
+    m_dirty           = true;
+    request_extra_frame();
+    wxWakeUpIdle();
+}
+
+void GLCanvas3D::_apply_live_print_move()
+{
+    if (!m_live_print_move)
+        return;
+
+    const GCodeProcessorResult* result        = m_gcode_viewer.get_gcode_result();
+    IMSlider*                   layers_slider = m_gcode_viewer.get_layers_slider();
+    IMSlider*                   moves_slider  = m_gcode_viewer.get_moves_slider();
+    const std::vector<double>   zs            = m_gcode_viewer.get_layers_zs();
+    if (result == nullptr || layers_slider == nullptr || moves_slider == nullptr || zs.empty() ||
+        *m_live_print_move >= result->moves.size()) {
+        m_live_print_move.reset();
+        return;
+    }
+    const size_t move_id = *m_live_print_move;
+
+    // Travels and z-hops sit above their layer, so place the move by the last extrusion before it.
+    size_t z_move = move_id;
+    while (z_move > 0 && result->moves[z_move].type != EMoveType::Extrude)
+        --z_move;
+    const double z     = result->moves[z_move].position.z();
+    const auto   z_it  = std::lower_bound(zs.begin(), zs.end(), z - EPSILON);
+    const int    layer = std::min(static_cast<int>(std::distance(zs.begin(), z_it)), layers_slider->GetMaxValue());
+
+    if (layers_slider->GetHigherValue() != layer) {
+        // Show everything printed so far, up to the current layer. The moves slider is rebuilt for
+        // the new layer while this is applied, so the move is placed on the next frame.
+        layers_slider->SetHigherValue(layer);
+        if (layers_slider->is_one_layer())
+            layers_slider->SetLowerValue(layer);
+        m_dirty = true;
+        request_extra_frame();
+        return;
+    }
+
+    m_live_print_move.reset();
+    const int value = m_gcode_viewer.get_moves_slider_value_for_move(move_id);
+    if (value >= 0 && value != moves_slider->GetHigherValue())
+        moves_slider->SetHigherValue(value);
 }
 
 void GLCanvas3D::_render_selection()

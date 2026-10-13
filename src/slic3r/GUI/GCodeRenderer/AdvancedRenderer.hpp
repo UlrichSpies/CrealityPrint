@@ -85,7 +85,8 @@ namespace Slic3r {
                 /*uint32_t get_extrusion_role_visibility_flags() const override;
                 void set_extrusion_role_visibility_flags(uint32_t flags) override;*/
                 void update_marker_curr_move() override;
-                
+                int get_moves_slider_value_for_move(size_t move_id) const override;
+
             protected:
                 bool load_toolpaths(const GCodeProcessorResult& gcode_result, const BuildVolume& build_volume, const std::vector<BoundingBoxf3>& exclude_bounding_box) override;
                 void update_moves_slider(bool set_to_max = false) override;
