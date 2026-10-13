@@ -45,6 +45,16 @@ Build (from a cmd with the BuildTools CMake + `C:\Strawberry\perl\bin` on PATH,
 script called as `.\build_release_vs2022.bat` so cmd finds it):
 - `.\build_release_vs2022.bat deps` → `deps\build\OrcaSlicer_dep` (Release only)
 - `.\build_release_vs2022.bat slicer` → `build\` (VS solution + install)
+- Breakpad needs the DIA SDK headers, which its project doesn't add. Set these in
+  the same shell first (PowerShell):
+  `$dia="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\DIA SDK"`,
+  `$env:CL="/I`"$dia\include`""`, `$env:LINK="/LIBPATH:`"$dia\lib\amd64`""`.
+- Run builds at low priority (`start "" /low /b /wait ...`) or the laptop crawls.
+- Timings on the laptop (12 cores): deps ~2.5 h, app ~1.5 h, at low priority.
+- Runnable app: `build\OrcaSlicer\CrealityPrint.exe`. Upstream installs a
+  WebView2 offline installer that isn't in the public repo; `src/CMakeLists.txt`
+  now skips it when missing.
+- Status 2026-10-13: laptop deps + app build succeed (incl. live preview code).
 
 ## Technical plan
 
