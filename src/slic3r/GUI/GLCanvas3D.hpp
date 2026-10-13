@@ -1408,6 +1408,7 @@ private:
     // BBS: GUI refactor: add canvas size as parameters
     void _render_gcode(int canvas_width, int canvas_height);
     void _apply_live_print_move();
+    void _render_live_print_button();
     void _render_cliper(int canvas_width, int canvas_height);
     // BBS: render a plane for assemble
     void _render_plane() const;

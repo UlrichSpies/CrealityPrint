@@ -11252,6 +11252,7 @@ void GLCanvas3D::_render_gcode(int canvas_width, int canvas_height)
     // After render(), which rebuilds the moves slider when the layer changed, and before the
     // dirty sliders below are applied to the view.
     _apply_live_print_move();
+    _render_live_print_button();
     IMSlider* layers_slider = m_gcode_viewer.get_layers_slider();
     IMSlider* moves_slider  = m_gcode_viewer.get_moves_slider();
 
@@ -11375,6 +11376,50 @@ void GLCanvas3D::_apply_live_print_move()
     const int value = m_gcode_viewer.get_moves_slider_value_for_move(move_id);
     if (value >= 0 && value != moves_slider->GetHigherValue())
         moves_slider->SetHigherValue(value);
+}
+
+void GLCanvas3D::_render_live_print_button()
+{
+    // Sits just above the moves slider card, which the renderer has drawn by now.
+    ImGuiWindow* moves_window = ImGui::FindWindowByName("moves_slider");
+    if (moves_window == nullptr || !moves_window->WasActive)
+        return;
+
+    const float  scale     = get_scale();
+    const bool   following = is_live_print_following();
+    const ImVec2 pos(moves_window->Pos.x, moves_window->Pos.y - 6.0f * scale);
+    ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * scale);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f * scale, 5.0f * scale));
+
+    const int flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+                      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
+                      ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
+    if (ImGui::Begin("live_print_follow", nullptr, flags)) {
+        const ImVec4 accent = ImGuiWrapper::COL_CREALITY;
+        const ImVec4 idle   = m_is_dark ? ImVec4(75.0f / 255.0f, 75.0f / 255.0f, 77.0f / 255.0f, 1.0f) : ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+        const ImVec4 text   = following ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) :
+                                          (m_is_dark ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(51.0f / 255.0f, 51.0f / 255.0f, 51.0f / 255.0f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Button, following ? accent : idle);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(accent.x, accent.y, accent.z, following ? 0.85f : 0.35f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
+        ImGui::PushStyleColor(ImGuiCol_Text, text);
+
+        if (ImGui::Button(following ? "Stop following##live_print" : "Follow print##live_print"))
+            toggle_live_print_follow();
+        if (ImGui::IsItemHovered()) {
+            const std::string source = following ? m_live_print_tracker->source_name() : std::string();
+            ImGui::SetTooltip("%s", following ? ("Following " + source + ". Click, L or an arrow key stops.").c_str() :
+                                                "Make the preview follow the printer as it prints (shortcut: L).");
+        }
+
+        ImGui::PopStyleColor(4);
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(4);
 }
 
 void GLCanvas3D::_render_selection()
