@@ -44,6 +44,8 @@
 #include <unordered_map>
 
 
+class Button; // slic3r/GUI/Widgets/Button.hpp
+
 namespace Slic3r {
     namespace GUI {
 
@@ -149,6 +151,7 @@ namespace Slic3r {
             void open_change_material_dialog();
             wxPanel*     m_device_tools_bar{nullptr};
             wxStaticText* m_device_tools_label{nullptr};
+            ::Button*    m_change_material_button{nullptr};
             std::string  m_device_tools_address;
 
             wxWebView* m_browser;

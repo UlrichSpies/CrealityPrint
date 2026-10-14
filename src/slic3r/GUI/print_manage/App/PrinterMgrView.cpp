@@ -2805,8 +2805,9 @@ void PrinterMgrView::create_device_tools_bar()
     m_device_tools_label->SetFont(::Label::Body_13);
     m_device_tools_label->SetForegroundColour(dark ? wxColour(200, 200, 204) : wxColour(110, 110, 115));
 
-    auto* button = new Button(m_device_tools_bar, _L("Change material"));
-    StateColor green(std::pair<wxColour, int>(wxColour(23, 204, 95), StateColor::Pressed),
+    auto* button = m_change_material_button = new Button(m_device_tools_bar, _L("Change material"));
+    StateColor green(std::pair<wxColour, int>(dark ? wxColour(75, 75, 79) : wxColour(206, 206, 206), StateColor::Disabled),
+                     std::pair<wxColour, int>(wxColour(23, 204, 95), StateColor::Pressed),
                      std::pair<wxColour, int>(wxColour(68, 205, 122), StateColor::Hovered),
                      std::pair<wxColour, int>(wxColour(23, 204, 95), StateColor::Normal));
     button->SetBackgroundColor(green);
@@ -2822,22 +2823,21 @@ void PrinterMgrView::create_device_tools_bar()
     sizer->AddStretchSpacer();
     sizer->Add(button, 0, wxALIGN_CENTER_VERTICAL | wxTOP | wxBOTTOM | wxRIGHT, FromDIP(8));
     m_device_tools_bar->SetSizer(sizer);
-    m_device_tools_bar->Hide();
+    update_device_tools_bar({});
 }
 
 void PrinterMgrView::update_device_tools_bar(const WebSocketProxy::DeviceDetailState& state)
 {
     if (m_device_tools_bar == nullptr)
         return;
-    // Only printers on the local network: the tools talk to them directly.
-    const bool show = state.visible && state.source == "lan" && !state.address.empty();
-    m_device_tools_address = show ? state.address : std::string();
-    if (show)
-        m_device_tools_label->SetLabel(wxString::Format(_L("Printer %s"), wxString::FromUTF8(state.address)));
-    if (m_device_tools_bar->IsShown() != show) {
-        m_device_tools_bar->Show(show);
-        Layout();
-    }
+    // Always visible so the tools are easy to find; usable once a printer on the local
+    // network is open, since they talk to it directly.
+    const bool usable = state.visible && state.source == "lan" && !state.address.empty();
+    m_device_tools_address = usable ? state.address : std::string();
+    m_device_tools_label->SetLabel(usable ? wxString::Format(_L("Printer %s"), wxString::FromUTF8(state.address)) :
+                                            _L("Open a printer on your network to change its material"));
+    m_change_material_button->Enable(usable);
+    m_device_tools_bar->Layout();
 }
 
 void PrinterMgrView::open_change_material_dialog()

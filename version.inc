@@ -24,7 +24,9 @@ if(NOT DEFINED BBL_INTERNAL_TESTING)
 set(BBL_INTERNAL_TESTING "0")
 endif()
 if(NOT DEFINED CREALITYPRINT_VERSION)
-set(CREALITYPRINT_VERSION "7.0.0.0")
+# Fork: match the upstream release this source is (v7.3.0, official build 6157).
+# Bump when merging a newer upstream release.
+set(CREALITYPRINT_VERSION "7.3.0.6157")
 endif()
 
 string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+\\.([0-9]+)" CREALITYPRINT_VERSION_WITH_BUILD "${CREALITYPRINT_VERSION}")
