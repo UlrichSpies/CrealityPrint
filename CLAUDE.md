@@ -89,6 +89,14 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
 - [ ] At home: test the existing Exclude Objects panel on the KE; log what the
       port-9999 websocket reports while printing (how often `curPosition` updates)
 - [ ] Implement cancel object (or fix/enable the existing one)
+- [ ] Change material (feature 3) — written + compiles 2026-10-14, untested on the
+      KE. Device tab → open the KE → "Change material" bar at the top.
+      Code: `GUI/ChangeMaterialDialog.*`, `print_manage/Device/CrealityPrinterSocket.*`
+      (own ws://ip:9999 connection), bar in `PrinterMgrView::create_device_tools_bar`.
+      Test idle first. Check: second websocket connection accepted, `nozzleTemp` /
+      `targetNozzleTemp` / `state` / `curPosition` read correctly, park position
+      (idle: X10 Y10 Z50) and extrude speed (3 mm/s) OK. Log lines:
+      `CrealityPrinterSocket`.
 - [ ] Implement live preview — first version 2026-10-13, compiles and the app
       starts; following not yet tried in the app. "Follow print" button above the
       moves slider in Preview (also key L). Code:
