@@ -6300,12 +6300,13 @@ void GUI_App::ShowDownNetPluginDlg() {
 
 void GUI_App::ShowUserLogin(bool show,const wxString& loginUrl)
 {
-    // Fork: no Creality account login. LAN printing doesn't need one; cloud features
-    // that ask for it just stay unavailable.
-    if (show) {
-        BOOST_LOG_TRIVIAL(info) << "Login dialog disabled in this build, ignoring request for " << loginUrl.ToStdString();
-        // Web pages (e.g. the first-run "select your login area" step) wait for the dialog to
-        // close before moving on, so report it as closed straight away, like LoginDialog::OnClose.
+    // Fork: login is optional. The first-run region page asks for it right after a region
+    // is chosen; skip that one. Logins the user asks for (e.g. the AI assistant) still open.
+    if (show && std::chrono::steady_clock::now() < m_skip_login_until) {
+        m_skip_login_until = {};
+        BOOST_LOG_TRIVIAL(info) << "Skipping the login dialog after the region choice";
+        // The page waits for the dialog to close before moving on, so report it as closed
+        // straight away, like LoginDialog::OnClose.
         CallAfter([this]() {
             const nlohmann::json event_json = {{"command", "login_dialog_event"}, {"event", "close"}};
             run_script(wxString::Format("window.handleStudioCmd(%s)",
@@ -9379,6 +9380,7 @@ std::string GUI_App::handle_web_request(std::string cmd)
                 AppConfig* config = GUI::wxGetApp().app_config;
                 const std::string previous_region = config->get("region");
                 config->set("region", region);
+                wxGetApp().skip_login_after_region_choice();
                 wxGetApp().update_publish_status();
                 // The printer catalogue differs per region, so the cached machine list has
                 // to be refetched; otherwise the add-printer tree keeps the old region's

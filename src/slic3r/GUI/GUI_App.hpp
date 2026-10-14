@@ -2,6 +2,7 @@
 #define slic3r_GUI_App_hpp_
 
 #include <wx/app.h>
+#include <chrono>
 #include <wx/colour.h>
 #include <wx/font.h>
 #include <wx/string.h>
@@ -246,6 +247,9 @@ public:
     std::chrono::steady_clock::time_point m_perf_slice_start_time;
     // 供 LoginDialog 异步回调校验对话框实例是否仍有效
     LoginDialog* get_login_dialog() const { return m_login_dialog; }
+    // Fork: the first-run region page opens the login dialog right after a region is
+    // chosen. Login is optional here, so skip that one request.
+    void skip_login_after_region_choice() { m_skip_login_until = std::chrono::steady_clock::now() + std::chrono::seconds(5); }
 private:
 
     wxFont		    m_small_font;
@@ -301,6 +305,7 @@ private:
     // login widget
     ZUserLogin*     login_dlg { nullptr };
     LoginDialog*    m_login_dialog { nullptr };
+    std::chrono::steady_clock::time_point m_skip_login_until{};
 
     VersionInfo version_info;
     VersionInfo privacy_version_info;
