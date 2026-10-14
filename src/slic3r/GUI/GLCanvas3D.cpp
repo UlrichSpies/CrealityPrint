@@ -11252,7 +11252,6 @@ void GLCanvas3D::_render_gcode(int canvas_width, int canvas_height)
     // After render(), which rebuilds the moves slider when the layer changed, and before the
     // dirty sliders below are applied to the view.
     _apply_live_print_move();
-    _render_live_print_button();
     IMSlider* layers_slider = m_gcode_viewer.get_layers_slider();
     IMSlider* moves_slider  = m_gcode_viewer.get_moves_slider();
 
@@ -11380,46 +11379,62 @@ void GLCanvas3D::_apply_live_print_move()
 
 void GLCanvas3D::_render_live_print_button()
 {
-    // Sits just above the moves slider card, which the renderer has drawn by now.
-    ImGuiWindow* moves_window = ImGui::FindWindowByName("moves_slider");
-    if (moves_window == nullptr || !moves_window->WasActive)
+    // Sits just above the "Slice plate" / "Send print" panel and is drawn like its buttons
+    // (see _render_slice_control): same width, height, rounding, colors and bold font.
+    ImGuiWindow* slice_window = ImGui::FindWindowByName("Slice");
+    if (slice_window == nullptr || !slice_window->WasActive)
         return;
 
-    const float  scale     = get_scale();
-    const bool   following = is_live_print_following();
-    const ImVec2 pos(moves_window->Pos.x, moves_window->Pos.y - 6.0f * scale);
+    const float  scale        = get_scale();
+    const bool   following    = is_live_print_following();
+    const float  panel_pad    = 10.0f * scale;                       // the Slice window's padding
+    const ImVec2 button_size  = ImVec2((150.0f + 28.0f) * scale, 28.0f * scale); // main button + drop-down
+    const ImVec2 pos(slice_window->Pos.x + panel_pad, slice_window->Pos.y + panel_pad - 6.0f * scale);
     ImGui::SetNextWindowPos(pos, ImGuiCond_Always, ImVec2(0.0f, 1.0f));
     ImGui::SetNextWindowBgAlpha(0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f * scale);
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f * scale, 5.0f * scale));
 
     const int flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
                       ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize |
                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
     if (ImGui::Begin("live_print_follow", nullptr, flags)) {
-        const ImVec4 accent = ImGuiWrapper::COL_CREALITY;
-        const ImVec4 idle   = m_is_dark ? ImVec4(75.0f / 255.0f, 75.0f / 255.0f, 77.0f / 255.0f, 1.0f) : ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
-        const ImVec4 text   = following ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) :
-                                          (m_is_dark ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(51.0f / 255.0f, 51.0f / 255.0f, 51.0f / 255.0f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Button, following ? accent : idle);
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(accent.x, accent.y, accent.z, following ? 0.85f : 0.35f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, accent);
-        ImGui::PushStyleColor(ImGuiCol_Text, text);
+        ImGuiWrapper& imgui = *wxGetApp().imgui();
+        imgui.push_bold_font();
 
-        if (ImGui::Button(following ? "Stop following##live_print" : "Follow print##live_print"))
+        const ImVec2 button_pos = ImGui::GetCursorScreenPos();
+        const bool   clicked    = ImGui::InvisibleButton("live_print_follow_button", button_size);
+        const bool   hovered    = ImGui::IsItemHovered();
+        const bool   active     = ImGui::IsItemActive();
+
+        auto         config  = DispConfig();
+        const ImVec4 idle    = config.getColor(following ? DispConfig::e_ct_btnBgSel : DispConfig::e_ct_btnBg);
+        const ImVec4 hover   = ImVec4(68.f / 255.f, 205.f / 255.f, 122.f / 255.f, 1.0f);
+        const ImVec4 pressed = config.getColor(DispConfig::e_ct_btnBgSel);
+        const ImVec4 bg      = active ? pressed : (hovered ? hover : idle);
+        ImDrawList*  dl      = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(button_pos, ImVec2(button_pos.x + button_size.x, button_pos.y + button_size.y), ImGui::GetColorU32(bg),
+                          4.0f * scale);
+
+        const char*  label    = following ? "Stop following" : "Follow print";
+        const ImVec2 text_sz  = ImGui::CalcTextSize(label);
+        const ImVec2 text_pos = ImVec2(button_pos.x + (button_size.x - text_sz.x) * 0.5f, button_pos.y + (button_size.y - text_sz.y) * 0.5f);
+        const ImU32  text_col = (following || hovered || active) ? IM_COL32(255, 255, 255, 255) :
+                                                                   ImGui::GetColorU32(config.getColor(DispConfig::e_ct_text));
+        dl->AddText(text_pos, text_col, label);
+
+        imgui.pop_bold_font();
+
+        if (clicked)
             toggle_live_print_follow();
-        if (ImGui::IsItemHovered()) {
+        if (hovered) {
             const std::string source = following ? m_live_print_tracker->source_name() : std::string();
             ImGui::SetTooltip("%s", following ? ("Following " + source + ". Click, L or an arrow key stops.").c_str() :
                                                 "Make the preview follow the printer as it prints (shortcut: L).");
         }
-
-        ImGui::PopStyleColor(4);
     }
     ImGui::End();
-    ImGui::PopStyleVar(4);
+    ImGui::PopStyleVar(2);
 }
 
 void GLCanvas3D::_render_selection()
@@ -11609,7 +11624,9 @@ void GLCanvas3D::_render_overlays()
     _check_and_update_toolbar_icon_scale();
 
     _render_slice_control();
-    
+    if (m_canvas_type == CanvasPreview && m_gcode_viewer.get_loaded())
+        _render_live_print_button();
+
     _render_assemble_control();
     _render_assemble_info();
 
