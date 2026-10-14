@@ -6304,6 +6304,13 @@ void GUI_App::ShowUserLogin(bool show,const wxString& loginUrl)
     // that ask for it just stay unavailable.
     if (show) {
         BOOST_LOG_TRIVIAL(info) << "Login dialog disabled in this build, ignoring request for " << loginUrl.ToStdString();
+        // Web pages (e.g. the first-run "select your login area" step) wait for the dialog to
+        // close before moving on, so report it as closed straight away, like LoginDialog::OnClose.
+        CallAfter([this]() {
+            const nlohmann::json event_json = {{"command", "login_dialog_event"}, {"event", "close"}};
+            run_script(wxString::Format("window.handleStudioCmd(%s)",
+                                        event_json.dump(-1, ' ', true, nlohmann::json::error_handler_t::ignore)));
+        });
         return;
     }
 #if 0
