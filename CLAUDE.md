@@ -134,14 +134,17 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
 
 - Builds default to **Release** (`cmake/BuildInfoUtil.cmake`). The old default
   "Alpha" used Creality's internal test servers (pre.crealitycloud.com) + vConsole.
-- **No account login**: `GUI_App::ShowUserLogin` never opens the dialog and
-  reports it closed at once, so the first-run region page's Next still works.
+- **Login is optional**: the first-run region page's automatic login request is
+  skipped (`GUI_App::skip_login_after_region_choice` + `ShowUserLogin`, which
+  reports the dialog closed so the page moves on). Logins the user asks for,
+  e.g. the AI assistant's Login button, open normally.
 - **No app updates**: `GUI_App::check_new_version_cx` returns immediately. It
   had offered the official 7.3.0 installer, which went to Program Files and ran
   instead of our build. To get Creality's newer versions: merge `upstream` into
   `ulrich/features` and rebuild.
-- Our build still calls itself 7.0.0.0 (build script never sets
-  `CREALITYPRINT_VERSION`); the source is 7.3.0. Fix next full rebuild.
+- Version is set in `version.inc` to **7.3.0.6157** (the upstream release the
+  source matches). At 7.0.0.0, cloud features like the AI assistant demanded an
+  update. Bump it when merging a newer upstream release.
 - Run our build from `build\OrcaSlicer\CrealityPrint.exe`, not the Start menu
   (that may point at an official install).
 
