@@ -1,18 +1,38 @@
 # CLAUDE.md — Ulrich's Creality Print fork
 
 Context for Claude (and me) when working on this repo from any machine.
-This is a personal fork of Creality Print to add two features. It is summarised
-from the first planning chat (2026-10-13). Keep the "Status" section up to date.
+This is a personal fork of Creality Print with three features. Started
+2026-10-13 on the work laptop. Keep the "Status" section up to date.
+
+## Home PC: start here (as of 2026-10-14)
+
+Everything so far was done on the work laptop and is pushed to `ulrich/features`.
+Nothing has touched the real printer yet.
+1. Clone + check out: `git clone https://github.com/UlrichSpies/CrealityPrint`,
+   `git checkout ulrich/features`, `git remote add upstream https://github.com/CrealityOfficial/CrealityPrint`.
+2. Build setup exactly as in "Build (Windows)" below (VS 2022 Build Tools,
+   Strawberry Perl, DIA SDK env vars). First build ~4 h total.
+3. Run `build\OrcaSlicer\CrealityPrint.exe` and test on the KE, in this order:
+   a. **Change material** with the printer idle (Device tab → open KE → bar at top).
+   b. **Exclude Objects** panel in the Device tab (Creality's own) during a
+      multi-object print — may already cover feature 2.
+   c. Log what the port-9999 websocket sends while printing (`curPosition`
+      update rate) — needed to make **Follow print** track the real printer.
+4. Next coding step: a real `PrintPositionSource` for live preview that reads
+   `curPosition` from the KE, reusing `CrealityPrinterSocket`.
 
 ## The goal
 
-Add two features to Creality Print itself (not via Mainsail/Fluidd/OctoPrint):
+Add these to Creality Print itself (not via Mainsail/Fluidd/OctoPrint):
 
 1. **Live print preview** – while a print is running, the G-code preview (layers +
    toolpath) should follow the printer in real time, showing exactly where the
    nozzle is and where it's going next.
 2. **Cancel a single object mid-print** – when printing several objects and one
    fails, cancel just that object and let the rest carry on.
+3. **Change material** – guided filament swap from the Device tab: pause (or
+   park when idle), heat to 245 °C (editable), push 35 mm out, prompt for the new
+   material, "New material" purges 50 mm more / "Same material" doesn't, resume.
 
 ## Setup
 
@@ -97,15 +117,14 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
       `targetNozzleTemp` / `state` / `curPosition` read correctly, park position
       (idle: X10 Y10 Z50) and extrude speed (3 mm/s) OK. Log lines:
       `CrealityPrinterSocket`.
-- [ ] Implement live preview — first version 2026-10-13, compiles and the app
-      starts; following not yet tried in the app. "Follow print" button above the
-      moves slider in Preview (also key L). Code:
-      `src/slic3r/GUI/LivePrintTracker.*` (position source → move matcher → timer),
-      `GLCanvas3D::toggle_live_print_follow` / `_apply_live_print_move`, and
-      `get_moves_slider_value_for_move` in both renderers. Press **L** in Preview to
-      follow a simulated print (`CREALITY_LIVE_SIM_SPEED`, default real time); arrow keys
-      or L stop it. Next: compile and test, then a real source from the port-9999
-      websocket (`curPosition`).
+- [ ] Live preview — works against a **simulated** printer only. "Follow print"
+      button above "Slice plate" in Preview (styled like it; also key L; arrow keys
+      stop it). Code: `src/slic3r/GUI/LivePrintTracker.*` (position source → move
+      matcher → timer), `GLCanvas3D::toggle_live_print_follow` /
+      `_apply_live_print_move` / `_render_live_print_button`, and
+      `get_moves_slider_value_for_move` in both renderers. Simulation speed:
+      `CREALITY_LIVE_SIM_SPEED` (default real time). Not yet checked on screen
+      that following looks right. Next: real source from the KE (`curPosition`).
 
 ## Code map
 
