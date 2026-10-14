@@ -9935,6 +9935,12 @@ Semver get_version(const std::string& str, const std::regex& regexp) {
 }
 void GUI_App::check_new_version_cx(bool show_tips, int by_user)
 {
+    // Fork: never offer Creality's official releases, they would replace this build.
+    BOOST_LOG_TRIVIAL(info) << "App update check disabled in this build";
+    if (show_tips)
+        no_new_version();
+    return;
+
 #if defined(CREALITYPRINT_APP_STORE) && defined(__WXOSX__)
     (void)show_tips;
     (void)by_user;
