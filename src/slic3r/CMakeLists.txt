@@ -212,6 +212,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/GCodeViewer.cpp
     GUI/LivePrintTracker.hpp
     GUI/LivePrintTracker.cpp
+    GUI/ChangeMaterialDialog.hpp
+    GUI/ChangeMaterialDialog.cpp
     GUI/Preferences.cpp
     GUI/Preferences.hpp
     GUI/ConfigRelateDialog.cpp
@@ -379,6 +381,8 @@ set(SLIC3R_GUI_SOURCES
     GUI/print_manage/Device/LanPrinterInterface.cpp
     GUI/print_manage/Device/LanDeviceProbe.hpp
     GUI/print_manage/Device/LanDeviceProbe.cpp
+    GUI/print_manage/Device/CrealityPrinterSocket.hpp
+    GUI/print_manage/Device/CrealityPrinterSocket.cpp
     GUI/print_manage/Device/Klipper4408Interface.hpp
     GUI/print_manage/Device/Klipper4408Interface.cpp
     GUI/print_manage/Device/KlipperCXInterface.hpp

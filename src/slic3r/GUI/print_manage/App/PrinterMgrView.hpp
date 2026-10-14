@@ -23,6 +23,7 @@
 #include "wx/fs_mem.h"
 #include "wx/stdpaths.h"
 #include <wx/panel.h>
+#include <wx/stattext.h>
 #include <wx/tbarbase.h>
 #include "wx/textctrl.h"
 #include <wx/timer.h>
@@ -141,6 +142,14 @@ namespace Slic3r {
             void down_files(const std::string& address, bool secureConnection, const std::vector<DownloadItem>& download_items, std::string savePath, std::string path_type);
             void scan_device(const std::string& request_id = {});
             void correct_device();
+
+            // Native bar above the page with tools for the printer whose detail page is open.
+            void create_device_tools_bar();
+            void update_device_tools_bar(const WebSocketProxy::DeviceDetailState& state);
+            void open_change_material_dialog();
+            wxPanel*     m_device_tools_bar{nullptr};
+            wxStaticText* m_device_tools_label{nullptr};
+            std::string  m_device_tools_address;
 
             wxWebView* m_browser;
             // Captured on the UI thread when m_browser is created. Background

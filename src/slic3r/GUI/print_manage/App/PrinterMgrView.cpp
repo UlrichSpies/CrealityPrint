@@ -10,6 +10,9 @@
 #include "slic3r/GUI/MainFrame.hpp"
 #include "slic3r/GUI/Notebook.hpp"
 #include "slic3r/GUI/PartPlate.hpp"
+#include "slic3r/GUI/ChangeMaterialDialog.hpp"
+#include "slic3r/GUI/Widgets/Button.hpp"
+#include "slic3r/GUI/Widgets/Label.hpp"
 #include "libslic3r/Thread.hpp"
 #include "libslic3r/Utils.hpp"
 #include "libslic3r/miniz_extension.hpp"
@@ -322,6 +325,8 @@ PrinterMgrView::PrinterMgrView(wxWindow *parent)
 
     SetSizer(topsizer);
 
+    create_device_tools_bar();
+    topsizer->Add(m_device_tools_bar, wxSizerFlags().Expand());
     topsizer->Add(m_browser, wxSizerFlags().Expand().Proportion(1));
 
     //Zoom
@@ -1015,6 +1020,7 @@ void PrinterMgrView::OnScriptMessage(wxWebViewEvent& evt)
                 state.source = j.value("source", std::string("none"));
                 state.address = j.value("address", std::string());
                 state.mac = j.value("mac", std::string());
+                update_device_tools_bar(state);
                 m_ws_proxy->SetDeviceDetailState(std::move(state));
             }
             return;
@@ -2787,6 +2793,59 @@ bool PrinterMgrView::LoadFile(std::string jPath, std::string &sContent)
     }
 
     return true;
+}
+
+void PrinterMgrView::create_device_tools_bar()
+{
+    const bool dark = wxGetApp().dark_mode();
+    m_device_tools_bar = new wxPanel(this);
+    m_device_tools_bar->SetBackgroundColour(dark ? wxColour(45, 45, 49) : wxColour(255, 255, 255));
+
+    m_device_tools_label = new wxStaticText(m_device_tools_bar, wxID_ANY, wxEmptyString);
+    m_device_tools_label->SetFont(::Label::Body_13);
+    m_device_tools_label->SetForegroundColour(dark ? wxColour(200, 200, 204) : wxColour(110, 110, 115));
+
+    auto* button = new Button(m_device_tools_bar, _L("Change material"));
+    StateColor green(std::pair<wxColour, int>(wxColour(23, 204, 95), StateColor::Pressed),
+                     std::pair<wxColour, int>(wxColour(68, 205, 122), StateColor::Hovered),
+                     std::pair<wxColour, int>(wxColour(23, 204, 95), StateColor::Normal));
+    button->SetBackgroundColor(green);
+    button->SetBorderColor(green);
+    button->SetTextColor(*wxWHITE);
+    button->SetMinSize(wxSize(FromDIP(150), FromDIP(28)));
+    button->SetCornerRadius(FromDIP(4));
+    button->SetToolTip(_L("Pause, heat, push the old material out and load a new one"));
+    button->Bind(wxEVT_BUTTON, [this](wxCommandEvent&) { open_change_material_dialog(); });
+
+    auto* sizer = new wxBoxSizer(wxHORIZONTAL);
+    sizer->Add(m_device_tools_label, 0, wxALIGN_CENTER_VERTICAL | wxLEFT, FromDIP(16));
+    sizer->AddStretchSpacer();
+    sizer->Add(button, 0, wxALIGN_CENTER_VERTICAL | wxTOP | wxBOTTOM | wxRIGHT, FromDIP(8));
+    m_device_tools_bar->SetSizer(sizer);
+    m_device_tools_bar->Hide();
+}
+
+void PrinterMgrView::update_device_tools_bar(const WebSocketProxy::DeviceDetailState& state)
+{
+    if (m_device_tools_bar == nullptr)
+        return;
+    // Only printers on the local network: the tools talk to them directly.
+    const bool show = state.visible && state.source == "lan" && !state.address.empty();
+    m_device_tools_address = show ? state.address : std::string();
+    if (show)
+        m_device_tools_label->SetLabel(wxString::Format(_L("Printer %s"), wxString::FromUTF8(state.address)));
+    if (m_device_tools_bar->IsShown() != show) {
+        m_device_tools_bar->Show(show);
+        Layout();
+    }
+}
+
+void PrinterMgrView::open_change_material_dialog()
+{
+    if (m_device_tools_address.empty())
+        return;
+    ChangeMaterialDialog dlg(this, m_device_tools_address, wxString::FromUTF8(m_device_tools_address));
+    dlg.ShowModal();
 }
 
 void PrinterMgrView::request_close_detail_page()
