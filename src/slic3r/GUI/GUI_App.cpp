@@ -6300,6 +6300,12 @@ void GUI_App::ShowDownNetPluginDlg() {
 
 void GUI_App::ShowUserLogin(bool show,const wxString& loginUrl)
 {
+    // Fork: no Creality account login. LAN printing doesn't need one; cloud features
+    // that ask for it just stay unavailable.
+    if (show) {
+        BOOST_LOG_TRIVIAL(info) << "Login dialog disabled in this build, ignoring request for " << loginUrl.ToStdString();
+        return;
+    }
 #if 0
         // BBS: User Login Dialog
     if (show) {

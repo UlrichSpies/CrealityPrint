@@ -61,8 +61,10 @@ macro(__configure_build_info_header)
 	set(RELEASE_RESOURCES_DIR "${BIN_OUTPUT_DIR}/Release/resources/")
 	__get_main_git_hash(MAIN_GIT_HASH)
 
+  # Fork: default to Release. "Alpha" points the app at Creality's internal test
+  # servers and turns on debug tools (vConsole).
   if(NOT DEFINED PROJECT_VERSION_EXTRA)
-  set(PROJECT_VERSION_EXTRA "Alpha")
+  set(PROJECT_VERSION_EXTRA "Release")
   endif()
   set(SHIPPING_LEVEL 2)
   if(${PROJECT_VERSION_EXTRA} STREQUAL "Release")
