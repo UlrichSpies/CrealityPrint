@@ -83,13 +83,15 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
 ## Status / next steps
 
 - [x] Fork cloned, upstream remote added, CLAUDE.md written
-- [ ] Read build scripts/docs, run first build (deps, then app) — laptop deps
-      build in progress 2026-10-13
+- [x] First build on the laptop (deps + app), 2026-10-13 — see Build section
+- [ ] Same build setup on the home PC
 - [x] Locate code (2026-10-13), see "Code map" below
 - [ ] At home: test the existing Exclude Objects panel on the KE; log what the
       port-9999 websocket reports while printing (how often `curPosition` updates)
 - [ ] Implement cancel object (or fix/enable the existing one)
-- [ ] Implement live preview — first version written 2026-10-13, not yet compiled:
+- [ ] Implement live preview — first version 2026-10-13, compiles and the app
+      starts; following not yet tried in the app. "Follow print" button above the
+      moves slider in Preview (also key L). Code:
       `src/slic3r/GUI/LivePrintTracker.*` (position source → move matcher → timer),
       `GLCanvas3D::toggle_live_print_follow` / `_apply_live_print_move`, and
       `get_moves_slider_value_for_move` in both renderers. Press **L** in Preview to
