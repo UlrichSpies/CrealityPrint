@@ -13,6 +13,7 @@
 #include <wx/sizer.h>
 #include <wx/stattext.h>
 
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 
@@ -56,10 +57,10 @@ std::optional<double> to_number(const nlohmann::json& status, const char* key)
     if (it->is_number())
         return it->get<double>();
     if (it->is_string()) {
-        try {
-            return std::stod(it->get<std::string>());
-        } catch (...) {
-        }
+        const std::string text = it->get<std::string>();
+        double value           = 0.;
+        if (std::from_chars(text.data(), text.data() + text.size(), value).ec == std::errc())
+            return value;
     }
     return std::nullopt;
 }
@@ -184,11 +185,23 @@ void ChangeMaterialDialog::on_status(const nlohmann::json& status)
     // "curPosition": "X:110.00 Y:10.00 Z:50.00"
     auto it = status.find("curPosition");
     if (it != status.end() && it->is_string()) {
-        double x, y, z;
-        if (std::sscanf(it->get<std::string>().c_str(), "X:%lf Y:%lf Z:%lf", &x, &y, &z) == 3) {
-            m_x = x;
-            m_y = y;
-            m_z = z;
+        // Not sscanf: %lf follows the locale, and a decimal-comma locale rejects "133.97".
+        const std::string text = it->get<std::string>();
+        double axis[3] = {0., 0., 0.};
+        int    found   = 0;
+        for (const char* p = text.c_str(); *p != '\0' && found < 3; ++p) {
+            if (*p == 'X' + found && p[1] == ':') {
+                const auto res = std::from_chars(p + 2, text.c_str() + text.size(), axis[found]);
+                if (res.ec != std::errc())
+                    break;
+                ++found;
+                p = res.ptr - 1;
+            }
+        }
+        if (found == 3) {
+            m_x = axis[0];
+            m_y = axis[1];
+            m_z = axis[2];
         }
     }
     update_ui();

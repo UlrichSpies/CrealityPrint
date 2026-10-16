@@ -4,22 +4,24 @@ Context for Claude (and me) when working on this repo from any machine.
 This is a personal fork of Creality Print with three features. Started
 2026-10-13 on the work laptop. Keep the "Status" section up to date.
 
-## Home PC: start here (as of 2026-10-14)
+## Home PC: state as of 2026-10-15
 
-Everything so far was done on the work laptop and is pushed to `ulrich/features`.
-Nothing has touched the real printer yet.
-1. Clone + check out: `git clone https://github.com/UlrichSpies/CrealityPrint`,
-   `git checkout ulrich/features`, `git remote add upstream https://github.com/CrealityOfficial/CrealityPrint`.
-2. Build setup exactly as in "Build (Windows)" below (VS 2022 Build Tools,
-   Strawberry Perl, DIA SDK env vars). First build ~4 h total.
-3. Run `build\OrcaSlicer\CrealityPrint.exe` and test on the KE, in this order:
-   a. **Change material** with the printer idle (Device tab → open KE → bar at top).
-   b. **Exclude Objects** panel in the Device tab (Creality's own) during a
-      multi-object print — may already cover feature 2.
-   c. Log what the port-9999 websocket sends while printing (`curPosition`
-      update rate) — needed to make **Follow print** track the real printer.
-4. Next coding step: a real `PrintPositionSource` for live preview that reads
-   `curPosition` from the KE, reusing `CrealityPrinterSocket`.
+The home PC is set up and built (`build\OrcaSlicer\CrealityPrint.exe` runs; it shares
+`%APPDATA%\Creality\Creality Print\7.3` with the official install, so close the official app
+first). Build gotchas hit on this PC, all solved:
+- Breakpad needs the **C++ ATL** component in the VS Build Tools (add it via the VS
+  installer, with no MSBuild processes running) and the DIA SDK env vars for the deps build too.
+- Use limited parallelism for the app build or the compiler runs out of memory (PCH heap
+  errors): `cmake --build . --config Release --target ALL_BUILD -- -m:2 /p:CL_MPCount=3`.
+- Needs ~30 GB free on C: during deps + app build. Close the running app before the
+  `install` target, or the DLL is locked.
+
+Still to test on the KE (printer idle first):
+a. **Change material** (Device tab → open KE → bar at top).
+b. **Exclude Objects** panel during a multi-object print — may already cover feature 2.
+c. **Follow print** against the real printer — see the Live preview item below.
+Measured 2026-10-15: the KE's port-9999 websocket sends ~4 `curPosition` changes/s while
+printing, plus `layer`, `TotalLayer`, `printFileName`, `printProgress`.
 
 ## The goal
 
@@ -117,7 +119,20 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
       `targetNozzleTemp` / `state` / `curPosition` read correctly, park position
       (idle: X10 Y10 Z50) and extrude speed (3 mm/s) OK. Log lines:
       `CrealityPrinterSocket`.
-- [ ] Live preview — works against a **simulated** printer only. "Follow print"
+- [x] Live preview — **follows the real KE as of 2026-10-16** (`CrealityPrinterPositionSource`;
+      address = env `CREALITY_LIVE_PRINTER_IP` or the last LAN printer opened in the
+      Device tab, stored as app config `live_print_printer_address`; falls back to the
+      simulation). The 2026-10-15 failure was a **locale bug**: `sscanf("%lf")`/`stod`/`strtod`
+      follow the system locale and reject "133.97" under a decimal-comma locale. Use
+      `std::from_chars` for printer numbers (fixed in LivePrintTracker and ChangeMaterialDialog).
+      The preview now glides between the ~4 position reports/s (`m_shown`/`m_rate` in
+      `LivePrintTracker::on_timer`); lags ~0.25 s. Smoothness not yet confirmed by eye.
+      Limits: the preview must be the unchanged slice of the file being printed; changing
+      slice settings (e.g. adding a filament) discards the G-code, so nothing moves until
+      re-sliced, and the new slice no longer matches the print. Idea: show "waiting for a
+      sliced preview" / distance-to-path in the banner. Diagnostics: every 5 s warning-level
+      `LivePrintTracker:` lines (samples/matched; keys + raw curPosition when none parse).
+      Original simulated-only notes: "Follow print"
       button above "Slice plate" in Preview (styled like it; also key L; arrow keys
       stop it). Code: `src/slic3r/GUI/LivePrintTracker.*` (position source → move
       matcher → timer), `GLCanvas3D::toggle_live_print_follow` /

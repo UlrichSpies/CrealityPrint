@@ -11295,21 +11295,37 @@ void GLCanvas3D::toggle_live_print_follow()
             [this](size_t move_id) { set_live_print_move(move_id); });
     }
 
-    // No printer connection yet: follow a simulated print of the previewed G-code.
-    // Runs in real time; CREALITY_LIVE_SIM_SPEED (e.g. 10) speeds it up for testing.
-    double speed = 1.0;
-    if (const char* env = std::getenv("CREALITY_LIVE_SIM_SPEED")) {
-        const double value = std::atof(env);
-        if (value > 0.0)
-            speed = value;
+    // Follow the real printer when we know its address: CREALITY_LIVE_PRINTER_IP, else the last
+    // LAN printer opened in the Device tab. Otherwise follow a simulated print of the previewed G-code.
+    std::string address;
+    if (const char* env = std::getenv("CREALITY_LIVE_PRINTER_IP"))
+        address = env;
+    if (address.empty())
+        address = wxGetApp().app_config->get("live_print_printer_address");
+
+    std::string message;
+    if (!address.empty()) {
+        m_live_print_tracker->start([address](const GCodeProcessorResult&) {
+            return std::make_unique<CrealityPrinterPositionSource>(address);
+        });
+        message = "Live print preview: following the printer at " + address + ". Press L or an arrow key to stop.";
+    } else {
+        // Runs in real time; CREALITY_LIVE_SIM_SPEED (e.g. 10) speeds it up for testing.
+        double speed = 1.0;
+        if (const char* env = std::getenv("CREALITY_LIVE_SIM_SPEED")) {
+            const double value = std::atof(env);
+            if (value > 0.0)
+                speed = value;
+        }
+        m_live_print_tracker->start([speed](const GCodeProcessorResult& result) {
+            return std::make_unique<SimulatedPrintSource>(result, speed);
+        });
+        message = (boost::format("Live print preview: no printer known (open one in the Device tab), following a simulated printer (x%1%). "
+                                 "Press L or an arrow key to stop.") % speed).str();
     }
-    m_live_print_tracker->start([speed](const GCodeProcessorResult& result) {
-        return std::make_unique<SimulatedPrintSource>(result, speed);
-    });
 
     wxGetApp().plater()->get_notification_manager()->push_notification(
-        NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel,
-        (boost::format("Live print preview: following a simulated printer (x%1%). Press L or an arrow key to stop.") % speed).str());
+        NotificationType::CustomNotification, NotificationManager::NotificationLevel::RegularNotificationLevel, message);
 }
 
 void GLCanvas3D::stop_live_print_follow()

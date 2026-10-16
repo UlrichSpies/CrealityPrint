@@ -9,6 +9,7 @@
 // hands that move index to the preview canvas, which moves its sliders there.
 
 #include "libslic3r/Point.hpp"
+#include "nlohmann/json.hpp"
 
 #include <chrono>
 #include <functional>
@@ -25,6 +26,8 @@ namespace Slic3r {
 struct GCodeProcessorResult;
 
 namespace GUI {
+
+class CrealityPrinterSocket;
 
 // One report of where the printer is, in the same coordinates as GCodeProcessorResult::moves.
 struct PrintPositionSample
@@ -71,6 +74,34 @@ private:
     size_t                                m_cursor{ 0 };
 };
 
+// Reads the nozzle position ("curPosition") from a Creality Klipper printer's LAN websocket.
+// While connected it logs how often the printer reports a new position (every few seconds).
+class CrealityPrinterPositionSource : public PrintPositionSource
+{
+public:
+    explicit CrealityPrinterPositionSource(std::string address);
+    ~CrealityPrinterPositionSource() override;
+
+    std::string name() const override;
+    std::optional<PrintPositionSample> poll() override;
+
+private:
+    void on_status(const nlohmann::json& status);
+    void on_connection(bool connected, const std::string& error);
+
+    std::string                            m_address;
+    std::unique_ptr<CrealityPrinterSocket> m_socket;
+    bool                                   m_connected{ false };
+    // Newest report, handed out once by poll().
+    std::optional<PrintPositionSample>     m_latest;
+
+    // Update rate statistics.
+    std::string                           m_last_position_text;
+    size_t                                m_messages{ 0 };
+    size_t                                m_position_changes{ 0 };
+    std::chrono::steady_clock::time_point m_stats_start;
+};
+
 // Maps printer reports to the move being executed.
 class PrintPositionMatcher
 {
@@ -79,6 +110,8 @@ public:
 
     // Index into GCodeProcessorResult::moves, or nothing if no move is a plausible match.
     std::optional<size_t> match(const PrintPositionSample& sample);
+    // Distance of the best candidate in the last match() (-1 if there was none), for diagnostics.
+    float last_distance() const { return m_last_distance; }
 
 private:
     struct Candidate
@@ -95,6 +128,7 @@ private:
 
     const GCodeProcessorResult& m_result;
     std::optional<size_t>       m_last;
+    float                       m_last_distance{ -1.f };
 };
 
 class LivePrintTracker : public wxEvtHandler
@@ -127,6 +161,20 @@ private:
     std::unique_ptr<PrintPositionSource>  m_source;
     std::unique_ptr<PrintPositionMatcher> m_matcher;
     std::optional<size_t>                 m_last_move;
+
+    // The printer reports a few positions per second; the shown move glides towards the latest
+    // matched one so the preview moves smoothly instead of in jumps.
+    double                                m_shown{ 0. };
+    size_t                                m_target{ 0 };
+    double                                m_rate{ 0. }; // moves per second
+    std::chrono::steady_clock::time_point m_last_tick;
+    std::chrono::steady_clock::time_point m_last_target_time;
+
+    // Diagnostics, logged every few seconds.
+    size_t                                m_stat_samples{ 0 };
+    size_t                                m_stat_matched{ 0 };
+    std::string                           m_stat_last;
+    std::chrono::steady_clock::time_point m_stat_start{ std::chrono::steady_clock::now() };
 };
 
 } // namespace GUI

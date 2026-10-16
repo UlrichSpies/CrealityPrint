@@ -2834,6 +2834,11 @@ void PrinterMgrView::update_device_tools_bar(const WebSocketProxy::DeviceDetailS
     // network is open, since they talk to it directly.
     const bool usable = state.visible && state.source == "lan" && !state.address.empty();
     m_device_tools_address = usable ? state.address : std::string();
+    // The live print preview follows the last LAN printer that was opened here.
+    if (usable && wxGetApp().app_config->get("live_print_printer_address") != state.address) {
+        wxGetApp().app_config->set("live_print_printer_address", state.address);
+        wxGetApp().app_config->save();
+    }
     m_device_tools_label->SetLabel(usable ? wxString::Format(_L("Printer %s"), wxString::FromUTF8(state.address)) :
                                             _L("Open a printer on your network to change its material"));
     m_change_material_button->Enable(usable);

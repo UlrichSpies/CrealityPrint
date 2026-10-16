@@ -1,12 +1,16 @@
 #include "LivePrintTracker.hpp"
 
 #include "libslic3r/GCode/GCodeProcessor.hpp"
+#include "print_manage/Device/CrealityPrinterSocket.hpp"
 
 #include <boost/format.hpp>
 #include <boost/log/trivial.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 
 namespace Slic3r {
@@ -15,7 +19,9 @@ namespace GUI {
 namespace {
 
 // How often the tracker asks the source for a new position.
-constexpr int   POLL_INTERVAL_MS = 100;
+constexpr int   POLL_INTERVAL_MS = 33;
+// Further than this between two samples, jump instead of gliding.
+constexpr double GLIDE_MAX_MOVES = 4000.;
 // A report further than this from every move nearby the last match triggers a full search.
 constexpr float NEAR_LAST_MAX_DISTANCE = 0.5f; // mm
 // A full search only accepts moves this close to the report.
@@ -93,6 +99,123 @@ std::optional<PrintPositionSample> SimulatedPrintSource::poll()
 }
 
 // ---------------------------------------------------------------------------------------------
+// CrealityPrinterPositionSource
+
+namespace {
+constexpr auto POSITION_STATS_INTERVAL = std::chrono::seconds(5);
+
+// The printer sends numbers either as JSON numbers or as strings.
+std::optional<double> json_number(const nlohmann::json& status, const char* key)
+{
+    const auto it = status.find(key);
+    if (it == status.end())
+        return std::nullopt;
+    if (it->is_number())
+        return it->get<double>();
+    if (it->is_string()) {
+        const std::string text = it->get<std::string>();
+        double value           = 0.;
+        if (std::from_chars(text.data(), text.data() + text.size(), value).ec == std::errc())
+            return value;
+    }
+    return std::nullopt;
+}
+} // namespace
+
+CrealityPrinterPositionSource::CrealityPrinterPositionSource(std::string address)
+    : m_address(std::move(address)), m_stats_start(std::chrono::steady_clock::now())
+{
+    m_socket = std::make_unique<CrealityPrinterSocket>(
+        m_address, [this](const nlohmann::json& status) { on_status(status); },
+        [this](bool connected, const std::string& error) { on_connection(connected, error); });
+    m_socket->connect();
+}
+
+CrealityPrinterPositionSource::~CrealityPrinterPositionSource()
+{
+    // Close first so no callback can reach this object while it is being destroyed.
+    m_socket.reset();
+}
+
+std::string CrealityPrinterPositionSource::name() const
+{
+    return "printer " + m_address + (m_connected ? "" : " (connecting)");
+}
+
+std::optional<PrintPositionSample> CrealityPrinterPositionSource::poll()
+{
+    std::optional<PrintPositionSample> sample = m_latest;
+    m_latest.reset();
+    return sample;
+}
+
+void CrealityPrinterPositionSource::on_connection(bool connected, const std::string& error)
+{
+    m_connected = connected;
+    if (!connected)
+        BOOST_LOG_TRIVIAL(warning) << "LivePrintTracker: lost the printer connection to " << m_address << ": " << error;
+    m_stats_start       = std::chrono::steady_clock::now();
+    m_messages          = 0;
+    m_position_changes  = 0;
+}
+
+void CrealityPrinterPositionSource::on_status(const nlohmann::json& status)
+{
+    ++m_messages;
+
+    // "curPosition": "X:110.00 Y:10.00 Z:50.00"
+    const auto it = status.find("curPosition");
+    if (it != status.end() && it->is_string()) {
+        const std::string text = it->get<std::string>();
+        // Not sscanf: %lf follows the locale, and a decimal-comma locale rejects "133.97".
+        double axis[3] = {0., 0., 0.};
+        int    found   = 0;
+        for (const char* p = text.c_str(); *p != '\0' && found < 3; ++p) {
+            if (*p == 'X' + found && p[1] == ':') {
+                const char* first = p + 2;
+                const char* last  = text.c_str() + text.size();
+                const auto  res   = std::from_chars(first, last, axis[found]);
+                if (res.ec != std::errc())
+                    break;
+                ++found;
+                p = res.ptr - 1;
+            }
+        }
+        const double x = axis[0], y = axis[1], z = axis[2];
+        if (found == 3) {
+            if (text != m_last_position_text) {
+                m_last_position_text = text;
+                ++m_position_changes;
+                PrintPositionSample sample;
+                sample.position = Vec3f(float(x), float(y), float(z));
+                if (const std::optional<double> layer = json_number(status, "layer"))
+                    sample.layer = static_cast<int>(*layer);
+                m_latest = sample;
+            }
+        }
+    }
+
+    const auto now = std::chrono::steady_clock::now();
+    if (now - m_stats_start >= POSITION_STATS_INTERVAL) {
+        const double seconds = std::chrono::duration<double>(now - m_stats_start).count();
+        BOOST_LOG_TRIVIAL(warning) << boost::format("LivePrintTracker: %1% reports %2% status messages/s, %3% position changes/s (last %4%)") %
+                                       m_address % (m_messages / seconds) % (m_position_changes / seconds) % m_last_position_text;
+        if (m_position_changes == 0) {
+            std::string keys;
+            for (auto kv = status.begin(); kv != status.end(); ++kv)
+                keys += kv.key() + " ";
+            const auto cp = status.find("curPosition");
+            BOOST_LOG_TRIVIAL(warning) << "LivePrintTracker: no position parsed. curPosition="
+                                       << (cp == status.end() ? std::string("<absent>") : cp->dump())
+                                       << " keys: " << keys;
+        }
+        m_stats_start      = now;
+        m_messages         = 0;
+        m_position_changes = 0;
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // PrintPositionMatcher
 
 PrintPositionMatcher::PrintPositionMatcher(const GCodeProcessorResult& result) : m_result(result) {}
@@ -112,9 +235,11 @@ std::optional<size_t> PrintPositionMatcher::match(const PrintPositionSample& sam
         std::optional<Candidate> global = search_all(sample.position);
         if (global && (!best || global->distance < best->distance))
             best = global;
+        m_last_distance = best ? best->distance : -1.f;
         if (best && best->distance > SEARCH_ALL_MAX_DISTANCE)
             best.reset();
-    }
+    } else
+        m_last_distance = best->distance;
 
     if (!best)
         return std::nullopt;
@@ -251,16 +376,57 @@ void LivePrintTracker::on_timer(wxTimerEvent&)
         return;
 
     const std::optional<PrintPositionSample> sample = m_source->poll();
-    if (!sample)
-        return;
+    if (sample) {
+        ++m_stat_samples;
+        const std::optional<size_t> move_id = m_matcher->match(*sample);
+        if (move_id) {
+            ++m_stat_matched;
+            const auto   t     = std::chrono::steady_clock::now();
+            const double dt    = std::clamp(std::chrono::duration<double>(t - m_last_target_time).count(), 0.1, 1.0);
+            const double delta = double(*move_id) - m_shown;
+            if (!m_last_move || delta < 0. || delta > GLIDE_MAX_MOVES) {
+                // First match, backwards or a long way: jump.
+                m_shown = double(*move_id);
+                m_rate  = 0.;
+            } else
+                m_rate = delta / dt; // arrive about when the next sample is due
+            m_target           = *move_id;
+            m_last_target_time = t;
+            if (!m_last_move) {
+                m_last_move = move_id;
+                if (m_on_move)
+                    m_on_move(*move_id);
+            }
+        }
+        m_stat_last = (boost::format("pos (%1$.2f, %2$.2f, %3$.2f) layer %4% -> %5%, distance %6$.2f mm") % sample->position.x() %
+                       sample->position.y() % sample->position.z() % sample->layer %
+                       (move_id ? "move " + std::to_string(*move_id) : std::string("no match")) % m_matcher->last_distance())
+                          .str();
+    }
 
-    const std::optional<size_t> move_id = m_matcher->match(*sample);
-    if (!move_id || move_id == m_last_move)
-        return;
+    const auto now = std::chrono::steady_clock::now();
 
-    m_last_move = move_id;
-    if (m_on_move)
-        m_on_move(*move_id);
+    // Glide the shown move towards the target.
+    if (m_last_move) {
+        const double elapsed = std::chrono::duration<double>(now - m_last_tick).count();
+        if (m_shown < double(m_target))
+            m_shown = std::min(double(m_target), m_shown + m_rate * elapsed);
+        const size_t shown = static_cast<size_t>(m_shown);
+        if (shown != *m_last_move) {
+            m_last_move = shown;
+            if (m_on_move)
+                m_on_move(shown);
+        }
+    }
+    m_last_tick = now;
+
+    if (now - m_stat_start >= std::chrono::seconds(5)) {
+        BOOST_LOG_TRIVIAL(warning) << "LivePrintTracker: " << source_name() << ": " << m_stat_samples << " samples, " << m_stat_matched
+                                   << " matched in 5 s. Last: " << (m_stat_last.empty() ? "none yet" : m_stat_last);
+        m_stat_samples = 0;
+        m_stat_matched = 0;
+        m_stat_start   = now;
+    }
 }
 
 } // namespace GUI
