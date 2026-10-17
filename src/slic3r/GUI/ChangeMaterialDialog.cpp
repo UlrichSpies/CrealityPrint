@@ -65,7 +65,10 @@ std::optional<double> to_number(const nlohmann::json& status, const char* key)
     return std::nullopt;
 }
 
-wxString format_temp(double value) { return wxString::Format("%.0f°C", value); }
+// The source is UTF-8 but the compiler reads narrow literals as ANSI, so spell the degree sign out.
+wxString degrees_celsius() { return wxString::FromUTF8("\xC2\xB0" "C"); }
+
+wxString format_temp(double value) { return wxString::Format("%.0f", value) + degrees_celsius(); }
 
 } // namespace
 
@@ -89,7 +92,7 @@ ChangeMaterialDialog::ChangeMaterialDialog(wxWindow* parent, const std::string& 
     temp_label->SetFont(::Label::Body_14);
     temp_row->Add(temp_label, 0, wxALIGN_CENTER_VERTICAL);
     temp_row->AddStretchSpacer();
-    m_temp_input = new SpinInput(this, wxString::Format("%d", TEMP_DEFAULT), "°C", wxDefaultPosition, wxSize(FromDIP(100), -1), 0,
+    m_temp_input = new SpinInput(this, wxString::Format("%d", TEMP_DEFAULT), degrees_celsius(), wxDefaultPosition, wxSize(FromDIP(100), -1), 0,
                                  TEMP_MIN, TEMP_MAX, TEMP_DEFAULT);
     temp_row->Add(m_temp_input, 0, wxALIGN_CENTER_VERTICAL);
     root->Add(temp_row, 0, wxEXPAND | wxLEFT | wxRIGHT | wxTOP, FromDIP(20));

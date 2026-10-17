@@ -108,26 +108,41 @@ class PrintPositionMatcher
 public:
     explicit PrintPositionMatcher(const GCodeProcessorResult& result);
 
-    // Index into GCodeProcessorResult::moves, or nothing if no move is a plausible match.
-    std::optional<size_t> match(const PrintPositionSample& sample);
+    struct Match
+    {
+        size_t move_id;
+        // Seconds of estimated print time at which the nozzle is at the matched point
+        // (inside the move, not just at its end), so the preview can move along the path.
+        double time;
+    };
+
+    // The matched point, or nothing if no move is a plausible match.
+    std::optional<Match> match(const PrintPositionSample& sample);
     // Distance of the best candidate in the last match() (-1 if there was none), for diagnostics.
     float last_distance() const { return m_last_distance; }
+    // First move that is done by the given estimated print time.
+    size_t move_at_time(double time) const;
 
 private:
     struct Candidate
     {
         size_t move_id;
         float  distance;
+        float  frac; // 0..1 along the move's path
     };
 
-    std::optional<size_t>    match_file_position(long long file_position) const;
-    // Distance from p to the path the nozzle follows while executing move_id.
-    float                    distance_to_move(size_t move_id, const Vec3f& p) const;
-    std::optional<Candidate> search_near_last(const Vec3f& p) const;
-    std::optional<Candidate> search_all(const Vec3f& p) const;
+    std::optional<Match>     match_file_position(long long file_position) const;
+    // Distance from p to the path the nozzle follows while executing move_id; frac = where along it.
+    float                    distance_to_move(size_t move_id, const Vec3f& p, float* frac = nullptr) const;
+    double                   time_in_move(const Candidate& candidate) const;
+    std::optional<Candidate> search_near_last(const Vec3f& p, int layer) const;
+    std::optional<Candidate> search_all(const Vec3f& p, int layer) const;
 
     const GCodeProcessorResult& m_result;
+    // Estimated print time at the end of each move.
+    std::vector<double>         m_time;
     std::optional<size_t>       m_last;
+    double                      m_last_time{ 0. };
     float                       m_last_distance{ -1.f };
 };
 
@@ -162,13 +177,14 @@ private:
     std::unique_ptr<PrintPositionMatcher> m_matcher;
     std::optional<size_t>                 m_last_move;
 
-    // The printer reports a few positions per second; the shown move glides towards the latest
-    // matched one so the preview moves smoothly instead of in jumps.
-    double                                m_shown{ 0. };
-    size_t                                m_target{ 0 };
-    double                                m_rate{ 0. }; // moves per second
+    // The printer reports a few positions per second. A display clock in estimated print time
+    // runs at real speed and is steered towards the latest matched time, so the preview moves
+    // at a steady pace along the path instead of in jumps.
+    bool                                  m_have_target{ false };
+    double                                m_shown_time{ 0. };
+    double                                m_target_time{ 0. };
     std::chrono::steady_clock::time_point m_last_tick;
-    std::chrono::steady_clock::time_point m_last_target_time;
+    std::chrono::steady_clock::time_point m_target_stamp;
 
     // Diagnostics, logged every few seconds.
     size_t                                m_stat_samples{ 0 };

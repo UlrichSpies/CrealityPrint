@@ -119,14 +119,21 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
       `targetNozzleTemp` / `state` / `curPosition` read correctly, park position
       (idle: X10 Y10 Z50) and extrude speed (3 mm/s) OK. Log lines:
       `CrealityPrinterSocket`.
+      2026-10-17: the dialog showed "Â°C" (UTF-8 `°` read as ANSI by MSVC); fixed with
+      `degrees_celsius()` (explicit UTF-8 bytes). Compiled but **not installed yet**: close the
+      app, run the `install` target, restart. Same trap applies to any non-ASCII literal.
 - [x] Live preview — **follows the real KE as of 2026-10-16** (`CrealityPrinterPositionSource`;
       address = env `CREALITY_LIVE_PRINTER_IP` or the last LAN printer opened in the
       Device tab, stored as app config `live_print_printer_address`; falls back to the
       simulation). The 2026-10-15 failure was a **locale bug**: `sscanf("%lf")`/`stod`/`strtod`
       follow the system locale and reject "133.97" under a decimal-comma locale. Use
       `std::from_chars` for printer numbers (fixed in LivePrintTracker and ChangeMaterialDialog).
-      The preview now glides between the ~4 position reports/s (`m_shown`/`m_rate` in
-      `LivePrintTracker::on_timer`); lags ~0.25 s. Smoothness not yet confirmed by eye.
+      2026-10-17: the index glide was jerky (long walls = 1 move; matcher jumped layers).
+      Now time-based: `PrintPositionMatcher` returns a print time (move + fraction along
+      it), searches only layers within ±1 of the printer's `layer`, never goes backwards;
+      `LivePrintTracker::on_timer` runs a display clock at real speed steered to the matched
+      time (extrapolates ≤0.5 s between ~4 reports/s). **Built but not yet confirmed by eye
+      on the KE** (the version installed 2026-10-17 evening has it; check smoothness first).
       Limits: the preview must be the unchanged slice of the file being printed; changing
       slice settings (e.g. adding a filament) discards the G-code, so nothing moves until
       re-sliced, and the new slice no longer matches the print. Idea: show "waiting for a
