@@ -110,7 +110,10 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
 - [x] Locate code (2026-10-13), see "Code map" below
 - [ ] At home: test the existing Exclude Objects panel on the KE; log what the
       port-9999 websocket reports while printing (how often `curPosition` updates)
-- [ ] Implement cancel object (or fix/enable the existing one)
+- [ ] Implement cancel object (or fix/enable the existing one) — 2026-10-19: the KE answers
+      `{method:"get",params:{reqPrintObjects:1}}` with `objects` (name, center, polygon),
+      `current_object`, `excluded_objects`. Added an always-visible bed panel on the Device
+      page (see "Device tab bundle patches"). Not yet tried excluding on a multi-object print.
 - [ ] Change material (feature 3) — written + compiles 2026-10-14, untested on the
       KE. Device tab → open the KE → "Change material" bar at the top.
       Code: `GUI/ChangeMaterialDialog.*`, `print_manage/Device/CrealityPrinterSocket.*`
@@ -195,6 +198,29 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
   update. Bump it when merging a newer upstream release.
 - Run our build from `build\OrcaSlicer\CrealityPrint.exe`, not the Start menu
   (that may point at an official install).
+
+## Device tab bundle patches (redo after every upstream merge)
+
+The Device tab is Creality's minified bundle `resources/web/deviceMgr/assets/BZCDzYbb.js`
+(no sources). These edits are made directly in it; an upstream merge will overwrite them, and
+the file name (hash) may change. Copy to `build\OrcaSlicer\resources\...` (or run `install`)
+and restart the app to load. No JS runtime on the PCs, so they were checked by eye only.
+- **Speed steps** (component `PrintSpeed`): the "Printing speed" heading shows the current
+  `curFeedratePct`, plus -5% / +5% spans (10–200%) that reuse the preset click handler, which
+  sends `setFeedratePct` (stepping to exactly 25 = Silent mode, as Creality's button does).
+- **Bed panel for excluding objects**: new component `ForkBedObjects`, defined right after
+  `DeviceSkipDialog=_export_sfc$1(...)` and rendered after `createVNode$1(DeviceSkipDialog,...)`
+  in `DeviceInfo$1` (under "Current printing"). Requests `reqPrintObjects` on mount and every
+  5 s, draws the bed image and reuses `ExcludeObject` (its click asks for confirmation; it
+  refuses the object being printed and the last remaining one). SVG flipped with scaleY(-1),
+  as the original dialog does.
+
+## Printer notes (KE)
+
+- Resonance band around **45–55 mm/s** (heard on internal bridges at 52 and Benchy hull sides at
+  ~48). Keep preset speeds out of it; half-speeds (~25) may excite it weakly. User presets
+  (`%APPDATA%\Creality\Creality Print\7.3\user\<id>\process|filament\base`, copies in
+  `Documents\CrealityPrint-*-presets`) were tuned for this on 2026-10-19.
 
 ## Notes
 
