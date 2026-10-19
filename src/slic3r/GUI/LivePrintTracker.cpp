@@ -18,26 +18,34 @@ namespace GUI {
 
 namespace {
 
-// How often the tracker asks the source for a new position.
-constexpr int   POLL_INTERVAL_MS = 33;
-// The display clock (estimated print time) is steered towards the matched time with this gain;
-// it never runs backwards and is capped to this multiple of real speed when catching up.
-constexpr double CLOCK_GAIN      = 2.5;  // 1/s
-constexpr double CLOCK_MAX_RATE  = 8.;
-// Between reports the target is extrapolated at real speed, for at most this long.
-constexpr double MAX_EXTRAPOLATE = 0.5; // s
-// Further than this from the clock, jump instead of steering.
-constexpr double RESYNC_BEHIND   = 2.;  // s
-constexpr double RESYNC_AHEAD    = 10.; // s
-// A report further than this from every move nearby the last match triggers a full search.
-constexpr float NEAR_LAST_MAX_DISTANCE = 0.5f; // mm
-// A full search only accepts moves this close to the report.
-constexpr float SEARCH_ALL_MAX_DISTANCE = 1.0f; // mm
-// Full search only looks at moves within this Z of the report (covers z-hops).
-constexpr float SEARCH_ALL_Z_TOLERANCE = 1.5f; // mm
-// Window around the last match that is searched first. Prints run forwards, so look further ahead.
-constexpr size_t NEAR_LAST_BEHIND = 8;
-constexpr size_t NEAR_LAST_AHEAD  = 3000;
+// How often the tracker asks the source for a new position and moves the preview.
+constexpr int    POLL_INTERVAL_MS = 33;
+// The preview runs this far behind the printer, so there is always a newer report to move
+// towards. The printer reports about every 0.25 s, but sometimes stalls for up to a second and
+// then sends a burst.
+constexpr double DISPLAY_DELAY  = 0.8; // s
+// Reports in a burst are spread out to at least this far apart, so the preview doesn't race.
+constexpr double MIN_REPORT_SPACING = 0.15; // s
+// Reports older than this are dropped.
+constexpr double REPORT_HISTORY = 3.;  // s
+// A report further than this (XY) from every candidate counts as a miss.
+constexpr float  NEAR_MAX_DISTANCE = 0.6f; // mm
+// A full search only accepts moves this close (XY) to the report.
+constexpr float  SEARCH_ALL_MAX_DISTANCE = 0.8f; // mm
+// Full search only looks at moves within this Z of the report (covers z-hops and the bed mesh).
+constexpr float  SEARCH_ALL_Z_TOLERANCE = 1.5f; // mm
+// Candidates are searched along the toolpath from a little behind the last match to well past
+// where the learned speed predicts the nozzle to be.
+constexpr double WINDOW_BEHIND    = 15.; // mm
+// Cost of a candidate on the layer next to the one the printer reports, in mm.
+constexpr double LAYER_WEIGHT = 0.4;
+constexpr double WINDOW_AHEAD_MIN = 30.; // mm, plus 3x the predicted travel
+// How much a candidate's distance from the predicted toolpath position counts against it, mm per
+// mm. The neighbouring infill line is a line length (tens of mm) away along the path, while the
+// reported position is only a few tenths of a mm off, so the prediction picks the right line.
+constexpr double PATH_WEIGHT = 0.005;
+// This many bad reports in a row and the tracker searches the whole layer again.
+constexpr int    MISSES_BEFORE_RESYNC = 4;
 
 // Seams are markers, not motion, so they never describe where the nozzle is.
 bool is_motion(const GCodeProcessorResult::MoveVertex& move) { return move.type != EMoveType::Seam; }
@@ -59,7 +67,7 @@ SimulatedPrintSource::SimulatedPrintSource(const GCodeProcessorResult& result, d
         const float distance = (move.position - prev).norm();
         if (move.feedrate > 0.f)
             time += distance / move.feedrate;
-        m_steps.push_back({ move.position, time, static_cast<int>(move.layer_id) });
+        m_steps.push_back({ move.position, time, static_cast<int>(move.layer_id) + 1 }); // numbered like the printer
         prev = move.position;
     }
 }
@@ -215,72 +223,98 @@ void CrealityPrinterPositionSource::on_status(const nlohmann::json& status)
 // ---------------------------------------------------------------------------------------------
 // PrintPositionMatcher
 
+namespace {
+// The KE counts layers from 1 (layer 26 is printed at Z 5.2 with 0.2 mm layers), the slicer's
+// layer_id from 0. Its number changes slightly before or after the position does, so a layer
+// either side is accepted, but at a cost: neighbouring layers usually have the same XY path, so
+// without it the matcher happily follows the layer below. -1 accepts everything at no cost.
+int layer_mismatch(const GCodeProcessorResult::MoveVertex& move, int printer_layer)
+{
+    return printer_layer < 0 ? 0 : std::abs(static_cast<int>(move.layer_id) - (printer_layer - 1));
+}
+bool layer_plausible(const GCodeProcessorResult::MoveVertex& move, int printer_layer) { return layer_mismatch(move, printer_layer) <= 1; }
+} // namespace
+
 PrintPositionMatcher::PrintPositionMatcher(const GCodeProcessorResult& result) : m_result(result)
 {
-    // Estimated print time at the end of every move, the same estimate the simulation uses.
-    m_time.reserve(result.moves.size());
-    double time = 0.;
-    Vec3f  prev = result.moves.empty() ? Vec3f::Zero() : result.moves.front().position;
+    m_length.reserve(result.moves.size());
+    double length = 0.;
+    Vec3f  prev   = result.moves.empty() ? Vec3f::Zero() : result.moves.front().position;
     for (const GCodeProcessorResult::MoveVertex& move : result.moves) {
         if (is_motion(move)) {
-            if (move.feedrate > 0.f)
-                time += double((move.position - prev).norm() / move.feedrate);
+            length += double((move.position - prev).norm());
             prev = move.position;
         }
-        m_time.push_back(time);
+        m_length.push_back(length);
     }
 }
 
-size_t PrintPositionMatcher::move_at_time(double time) const
+size_t PrintPositionMatcher::move_at_position(double position) const
 {
-    if (m_time.empty())
+    if (m_length.empty())
         return 0;
-    const auto it = std::lower_bound(m_time.begin(), m_time.end(), time);
-    return it == m_time.end() ? m_time.size() - 1 : static_cast<size_t>(std::distance(m_time.begin(), it));
+    const auto it = std::lower_bound(m_length.begin(), m_length.end(), position);
+    return it == m_length.end() ? m_length.size() - 1 : static_cast<size_t>(std::distance(m_length.begin(), it));
 }
 
 std::optional<PrintPositionMatcher::Match> PrintPositionMatcher::match(const PrintPositionSample& sample)
 {
+    const auto now = std::chrono::steady_clock::now();
+
     // An exact file position beats any geometric guess.
     if (sample.file_position >= 0) {
         if (std::optional<Match> found = match_file_position(sample.file_position)) {
-            m_last      = found->move_id;
-            m_last_time = found->time;
+            m_last          = found->move_id;
+            m_last_position = found->position;
+            m_last_wall     = now;
             return found;
         }
     }
 
-    bool                     resynced = false;
-    std::optional<Candidate> best     = search_near_last(sample.position, sample.layer);
-    if (!best || best->distance > NEAR_LAST_MAX_DISTANCE) {
-        std::optional<Candidate> global = search_all(sample.position, sample.layer);
-        if (global && (!best || global->distance < best->distance)) {
-            best     = global;
-            resynced = true;
-        }
+    // Only moves around where the nozzle should be by now are candidates: in dense infill,
+    // neighbouring lines are closer together than the position noise, so position alone picks
+    // the wrong one.
+    const bool   tracking  = m_last.has_value();
+    const double elapsed   = tracking ? std::clamp(std::chrono::duration<double>(now - m_last_wall).count(), 0., 3.) : 0.;
+    const double travel    = m_speed * elapsed;
+    const double predicted = m_last_position + travel;
+    bool         resynced  = false;
+
+    std::optional<Candidate> best;
+    if (tracking) {
+        best = search_near(sample.position, sample.layer, predicted, travel);
+        if (best && best->distance > NEAR_MAX_DISTANCE)
+            best.reset();
+    }
+    if (best) {
+        m_misses        = 0;
+        m_last_distance = best->distance;
+    } else {
+        ++m_misses;
+        if (tracking && m_misses < MISSES_BEFORE_RESYNC)
+            return std::nullopt; // a bad report or two: wait for the next one
+        // Lost track: search the whole layer.
+        best = search_all(sample.position, sample.layer);
+        if (!best && sample.layer >= 0)
+            best = search_all(sample.position, -1); // the reported layer may be stale or numbered differently
         m_last_distance = best ? best->distance : -1.f;
         if (best && best->distance > SEARCH_ALL_MAX_DISTANCE)
             best.reset();
-    } else
-        m_last_distance = best->distance;
-
-    if (!best && sample.layer >= 0) {
-        // The reported layer may be stale or numbered differently: try again without it.
-        best = search_all(sample.position, -1);
-        if (best && best->distance > SEARCH_ALL_MAX_DISTANCE)
-            best.reset();
-        resynced = best.has_value();
-        m_last_distance = best ? best->distance : m_last_distance;
+        if (!best)
+            return std::nullopt;
+        resynced = true;
+        m_misses = 0;
     }
-    if (!best)
-        return std::nullopt;
-    double time = time_in_move(*best);
-    // Prints only run forwards: jitter in the reports must not move the preview back.
-    if (!resynced)
-        time = std::max(time, m_last_time);
-    m_last      = best->move_id;
-    m_last_time = time;
-    return Match{ best->move_id, time };
+
+    // Not clamped to move forwards: if the last match was a little too far ahead, the next one may
+    // correct it. The preview itself never moves back.
+    const double position = position_in_move(*best);
+    if (!resynced && elapsed >= 0.1)
+        m_speed = std::clamp(0.6 * m_speed + 0.4 * std::max(0., position - m_last_position) / elapsed, 1., 1000.);
+    m_last          = best->move_id;
+    m_last_position = position;
+    m_last_wall     = now;
+    return Match{ best->move_id, position, resynced };
 }
 
 std::optional<PrintPositionMatcher::Match> PrintPositionMatcher::match_file_position(long long file_position) const
@@ -299,34 +333,35 @@ std::optional<PrintPositionMatcher::Match> PrintPositionMatcher::match_file_posi
     if (move_it == moves.end())
         return std::nullopt;
     const size_t move_id = static_cast<size_t>(std::distance(moves.begin(), move_it));
-    return Match{ move_id, m_time[move_id] };
+    return Match{ move_id, m_length[move_id], false };
 }
 
 float PrintPositionMatcher::distance_to_move(size_t move_id, const Vec3f& p, float* frac) const
 {
     const auto& moves = m_result.moves;
-    size_t      prev  = move_id;
+    const Vec2f q(p.x(), p.y());
+    const Vec2f b(moves[move_id].position.x(), moves[move_id].position.y());
+    size_t      prev = move_id;
     while (prev > 0) {
         --prev;
         if (is_motion(moves[prev])) {
-            const Vec3f& a = moves[prev].position;
-            const Vec3f& b = moves[move_id].position;
-            const Vec3f  ab     = b - a;
-            const float  len_sq = ab.squaredNorm();
-            const float  t      = len_sq > 0.f ? std::clamp((p - a).dot(ab) / len_sq, 0.f, 1.f) : 1.f;
+            const Vec2f a(moves[prev].position.x(), moves[prev].position.y());
+            const Vec2f ab     = b - a;
+            const float len_sq = ab.squaredNorm();
+            const float t      = len_sq > 0.f ? std::clamp((q - a).dot(ab) / len_sq, 0.f, 1.f) : 1.f;
             if (frac)
                 *frac = t;
-            return (p - (a + t * ab)).norm();
+            return (q - (a + t * ab)).norm();
         }
     }
     if (frac)
         *frac = 1.f;
-    return (p - moves[move_id].position).norm();
+    return (q - b).norm();
 }
 
-double PrintPositionMatcher::time_in_move(const Candidate& candidate) const
+double PrintPositionMatcher::position_in_move(const Candidate& candidate) const
 {
-    // The move starts when the previous motion move ends.
+    // The move starts where the previous motion move ends.
     const auto& moves = m_result.moves;
     size_t      prev  = candidate.move_id;
     while (prev > 0) {
@@ -334,43 +369,29 @@ double PrintPositionMatcher::time_in_move(const Candidate& candidate) const
         if (is_motion(moves[prev]))
             break;
     }
-    const double end   = m_time[candidate.move_id];
-    const double start = candidate.move_id > 0 ? m_time[prev] : end;
+    const double end   = m_length[candidate.move_id];
+    const double start = candidate.move_id > 0 ? m_length[prev] : end;
     return start + double(candidate.frac) * (end - start);
 }
 
-namespace {
-// The printer's layer number may be zero- or one-based, and it changes slightly before or after
-// the position does, so accept a layer either side of it. -1 accepts everything.
-bool layer_plausible(const GCodeProcessorResult::MoveVertex& move, int layer)
+std::optional<PrintPositionMatcher::Candidate> PrintPositionMatcher::search_near(const Vec3f& p, int layer, double predicted, double travel) const
 {
-    return layer < 0 || std::abs(static_cast<int>(move.layer_id) - layer) <= 1;
-}
-} // namespace
-
-std::optional<PrintPositionMatcher::Candidate> PrintPositionMatcher::search_near_last(const Vec3f& p, int layer) const
-{
-    if (!m_last)
-        return std::nullopt;
-
     const auto&  moves = m_result.moves;
-    const size_t last  = std::min(*m_last, moves.size() - 1);
-    const size_t begin = last > NEAR_LAST_BEHIND ? last - NEAR_LAST_BEHIND : 0;
-    const size_t end   = std::min(moves.size(), last + NEAR_LAST_AHEAD);
+    const size_t begin = move_at_position(m_last_position - WINDOW_BEHIND);
+    const size_t end   = std::min(moves.size(), move_at_position(predicted + WINDOW_AHEAD_MIN + 3. * travel) + 1);
 
     std::optional<Candidate> best;
-    float                    best_score = std::numeric_limits<float>::max();
+    double                   best_score = std::numeric_limits<double>::max();
     for (size_t i = begin; i < end; ++i) {
         if (!is_motion(moves[i]) || !layer_plausible(moves[i], layer))
             continue;
-        float        frac     = 0.f;
-        const float distance = distance_to_move(i, p, &frac);
-        // Paths cross each other within a layer, so prefer moves just after the last match,
-        // and going backwards only for a clearly better fit.
-        const float penalty = i >= last ? 0.0005f * float(i - last) : 0.01f * float(last - i);
-        if (distance + penalty < best_score) {
-            best_score = distance + penalty;
-            best       = Candidate{ i, distance, frac };
+        Candidate candidate{ i, 0.f, 0.f };
+        candidate.distance = distance_to_move(i, p, &candidate.frac);
+        const double score = double(candidate.distance) + PATH_WEIGHT * std::abs(position_in_move(candidate) - predicted) +
+                             LAYER_WEIGHT * layer_mismatch(moves[i], layer);
+        if (score < best_score) {
+            best_score = score;
+            best       = candidate;
         }
     }
     return best;
@@ -380,14 +401,18 @@ std::optional<PrintPositionMatcher::Candidate> PrintPositionMatcher::search_all(
 {
     const auto&              moves = m_result.moves;
     std::optional<Candidate> best;
+    double                   best_score = std::numeric_limits<double>::max();
     for (size_t i = 0; i < moves.size(); ++i) {
         if (!is_motion(moves[i]) || !layer_plausible(moves[i], layer) ||
             std::abs(moves[i].position.z() - p.z()) > SEARCH_ALL_Z_TOLERANCE)
             continue;
-        float        frac     = 0.f;
-        const float distance = distance_to_move(i, p, &frac);
-        if (!best || distance < best->distance)
-            best = Candidate{ i, distance, frac };
+        Candidate candidate{ i, 0.f, 0.f };
+        candidate.distance = distance_to_move(i, p, &candidate.frac);
+        const double score = double(candidate.distance) + LAYER_WEIGHT * layer_mismatch(moves[i], layer);
+        if (score < best_score) {
+            best_score = score;
+            best       = candidate;
+        }
     }
     return best;
 }
@@ -410,8 +435,7 @@ void LivePrintTracker::start(SourceFactory make_source)
     m_result      = nullptr;
     m_source.reset();
     m_matcher.reset();
-    m_last_move.reset();
-    m_have_target = false;
+    reset_display();
     m_timer.Start(POLL_INTERVAL_MS);
 }
 
@@ -424,6 +448,13 @@ void LivePrintTracker::stop()
 }
 
 std::string LivePrintTracker::source_name() const { return m_source ? m_source->name() : std::string(); }
+
+void LivePrintTracker::reset_display()
+{
+    m_last_move.reset();
+    m_reports.clear();
+    m_shown_position.reset();
+}
 
 bool LivePrintTracker::sync_with_result()
 {
@@ -439,8 +470,7 @@ bool LivePrintTracker::sync_with_result()
         m_result_moves = result->moves.size();
         m_source       = m_make_source ? m_make_source(*result) : nullptr;
         m_matcher      = std::make_unique<PrintPositionMatcher>(*result);
-        m_last_move.reset();
-        m_have_target = false;
+        reset_display();
         BOOST_LOG_TRIVIAL(info) << "LivePrintTracker: following " << source_name() << ", " << m_result_moves << " moves";
     }
     return m_source != nullptr;
@@ -451,50 +481,67 @@ void LivePrintTracker::on_timer(wxTimerEvent&)
     if (!sync_with_result())
         return;
 
-    const std::optional<PrintPositionSample> sample = m_source->poll();
-    if (sample) {
+    const auto now = std::chrono::steady_clock::now();
+
+    if (const std::optional<PrintPositionSample> sample = m_source->poll()) {
         ++m_stat_samples;
         const std::optional<PrintPositionMatcher::Match> match = m_matcher->match(*sample);
         if (match) {
             ++m_stat_matched;
-            if (!m_have_target || match->time < m_shown_time - RESYNC_BEHIND || match->time > m_shown_time + RESYNC_AHEAD)
-                m_shown_time = match->time; // first match or lost track: jump
-            m_target_time  = match->time;
-            m_target_stamp = std::chrono::steady_clock::now();
-            m_have_target  = true;
+            if (match->resynced || !m_shown_position) {
+                // First match, or tracking was lost: jump there.
+                if (match->resynced)
+                    ++m_stat_resyncs;
+                m_reports.clear();
+                m_shown_position = match->position;
+            }
+            auto stamp = now;
+            if (!m_reports.empty())
+                stamp = std::max(stamp, m_reports.back().time + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                                                    std::chrono::duration<double>(MIN_REPORT_SPACING)));
+            m_reports.push_back({ stamp, match->position });
         }
-        m_stat_last = (boost::format("pos (%1$.2f, %2$.2f, %3$.2f) layer %4% -> %5%, distance %6$.2f mm") % sample->position.x() %
-                       sample->position.y() % sample->position.z() % sample->layer %
-                       (match ? "move " + std::to_string(match->move_id) + " t=" + std::to_string(match->time) :
-                                std::string("no match")) %
-                       m_matcher->last_distance())
+        m_stat_last = (boost::format("pos (%1$.2f, %2$.2f, %3$.2f) layer %4% -> %5%, distance %6$.2f mm, speed %7$.0f mm/s") %
+                       sample->position.x() % sample->position.y() % sample->position.z() % sample->layer %
+                       (match ? (boost::format("move %1% at %2$.1f mm") % match->move_id % match->position).str() : std::string("no match")) %
+                       m_matcher->last_distance() % m_matcher->speed())
                           .str();
     }
 
-    const auto now = std::chrono::steady_clock::now();
-
-    // Run the display clock at real speed, steered towards the newest matched time (extrapolated
-    // at real speed since it arrived). It never runs backwards.
-    if (m_have_target) {
-        const double elapsed = std::min(std::chrono::duration<double>(now - m_last_tick).count(), 0.2);
-        const double since   = std::clamp(std::chrono::duration<double>(now - m_target_stamp).count(), 0., MAX_EXTRAPOLATE);
-        const double error   = m_target_time + since - m_shown_time;
-        const double rate    = std::clamp(1. + CLOCK_GAIN * error, 0., CLOCK_MAX_RATE);
-        m_shown_time += rate * elapsed;
-        const size_t shown = m_matcher->move_at_time(m_shown_time);
+    // Show where the nozzle was DISPLAY_DELAY ago, interpolated between the reports around then.
+    while (m_reports.size() > 2 && std::chrono::duration<double>(now - m_reports[1].time).count() > REPORT_HISTORY)
+        m_reports.pop_front();
+    if (m_shown_position && !m_reports.empty()) {
+        const auto render = now - std::chrono::duration_cast<std::chrono::steady_clock::duration>(std::chrono::duration<double>(DISPLAY_DELAY));
+        double     target = m_reports.back().position; // no newer report yet: wait at the newest
+        if (render <= m_reports.front().time)
+            target = m_reports.front().position;
+        else
+            for (size_t i = 0; i + 1 < m_reports.size(); ++i) {
+                const Report& a = m_reports[i];
+                const Report& b = m_reports[i + 1];
+                if (render < b.time) {
+                    const double span = std::chrono::duration<double>(b.time - a.time).count();
+                    const double t    = span > 0. ? std::chrono::duration<double>(render - a.time).count() / span : 1.;
+                    target            = a.position + std::clamp(t, 0., 1.) * (b.position - a.position);
+                    break;
+                }
+            }
+        m_shown_position = std::max(*m_shown_position, target);
+        const size_t shown = m_matcher->move_at_position(*m_shown_position);
         if (!m_last_move || shown != *m_last_move) {
             m_last_move = shown;
             if (m_on_move)
                 m_on_move(shown);
         }
     }
-    m_last_tick = now;
 
     if (now - m_stat_start >= std::chrono::seconds(5)) {
         BOOST_LOG_TRIVIAL(warning) << "LivePrintTracker: " << source_name() << ": " << m_stat_samples << " samples, " << m_stat_matched
-                                   << " matched in 5 s. Last: " << (m_stat_last.empty() ? "none yet" : m_stat_last);
+                                   << " matched, " << m_stat_resyncs << " resyncs in 5 s. Last: " << (m_stat_last.empty() ? "none yet" : m_stat_last);
         m_stat_samples = 0;
         m_stat_matched = 0;
+        m_stat_resyncs = 0;
         m_stat_start   = now;
     }
 }

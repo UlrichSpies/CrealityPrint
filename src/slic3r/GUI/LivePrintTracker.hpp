@@ -12,6 +12,7 @@
 #include "nlohmann/json.hpp"
 
 #include <chrono>
+#include <deque>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -33,7 +34,7 @@ class CrealityPrinterSocket;
 struct PrintPositionSample
 {
     Vec3f     position{ Vec3f::Zero() };
-    // Zero-based layer the printer says it is on, -1 if unknown.
+    // Layer the printer says it is on, counted from 1 as the KE does, -1 if unknown.
     int       layer{ -1 };
     // Byte offset of the G-code line being executed (Klipper/Moonraker virtual_sdcard.file_position), -1 if unknown.
     long long file_position{ -1 };
@@ -102,7 +103,7 @@ private:
     std::chrono::steady_clock::time_point m_stats_start;
 };
 
-// Maps printer reports to the move being executed.
+// Maps printer reports to a point on the sliced toolpath.
 class PrintPositionMatcher
 {
 public:
@@ -111,17 +112,21 @@ public:
     struct Match
     {
         size_t move_id;
-        // Seconds of estimated print time at which the nozzle is at the matched point
-        // (inside the move, not just at its end), so the preview can move along the path.
-        double time;
+        // Millimetres along the toolpath (travel included) of the matched point, inside the move,
+        // so the preview can move along the path between reports.
+        double position;
+        // Tracking was lost and this came from a fresh search: the preview should jump, not glide.
+        bool   resynced;
     };
 
     // The matched point, or nothing if no move is a plausible match.
     std::optional<Match> match(const PrintPositionSample& sample);
-    // Distance of the best candidate in the last match() (-1 if there was none), for diagnostics.
-    float last_distance() const { return m_last_distance; }
-    // First move that is done by the given estimated print time.
-    size_t move_at_time(double time) const;
+    // XY distance of the best candidate in the last match() (-1 if there was none), for diagnostics.
+    float  last_distance() const { return m_last_distance; }
+    // Learned speed along the toolpath, mm/s, for diagnostics.
+    double speed() const { return m_speed; }
+    // The move being executed at the given distance along the toolpath.
+    size_t move_at_position(double position) const;
 
 private:
     struct Candidate
@@ -132,17 +137,21 @@ private:
     };
 
     std::optional<Match>     match_file_position(long long file_position) const;
-    // Distance from p to the path the nozzle follows while executing move_id; frac = where along it.
+    // XY distance from p to the path the nozzle follows while executing move_id; frac = where along it.
+    // Z is left out: the printer's Z differs from the G-code by the bed mesh and z-hops.
     float                    distance_to_move(size_t move_id, const Vec3f& p, float* frac = nullptr) const;
-    double                   time_in_move(const Candidate& candidate) const;
-    std::optional<Candidate> search_near_last(const Vec3f& p, int layer) const;
+    double                   position_in_move(const Candidate& candidate) const;
+    std::optional<Candidate> search_near(const Vec3f& p, int layer, double predicted, double travel) const;
     std::optional<Candidate> search_all(const Vec3f& p, int layer) const;
 
     const GCodeProcessorResult& m_result;
-    // Estimated print time at the end of each move.
-    std::vector<double>         m_time;
+    // Toolpath length at the end of each move, mm.
+    std::vector<double>         m_length;
     std::optional<size_t>       m_last;
-    double                      m_last_time{ 0. };
+    double                      m_last_position{ 0. };
+    double                      m_speed{ 50. }; // mm/s along the toolpath, learned from the reports
+    int                         m_misses{ 0 };
+    std::chrono::steady_clock::time_point m_last_wall;
     float                       m_last_distance{ -1.f };
 };
 
@@ -166,6 +175,7 @@ private:
     void on_timer(wxTimerEvent& evt);
     // Recreates the source and matcher if the preview now shows different G-code. False if there is none.
     bool sync_with_result();
+    void reset_display();
 
     ResultGetter                          m_get_result;
     MoveCallback                          m_on_move;
@@ -177,18 +187,21 @@ private:
     std::unique_ptr<PrintPositionMatcher> m_matcher;
     std::optional<size_t>                 m_last_move;
 
-    // The printer reports a few positions per second. A display clock in estimated print time
-    // runs at real speed and is steered towards the latest matched time, so the preview moves
-    // at a steady pace along the path instead of in jumps.
-    bool                                  m_have_target{ false };
-    double                                m_shown_time{ 0. };
-    double                                m_target_time{ 0. };
-    std::chrono::steady_clock::time_point m_last_tick;
-    std::chrono::steady_clock::time_point m_target_stamp;
+    // The printer reports a few positions per second. The preview shows where the nozzle was a
+    // fixed delay ago, interpolated along the toolpath between the two reports around that moment,
+    // so it moves at the printer's real speed without having to guess ahead.
+    struct Report
+    {
+        std::chrono::steady_clock::time_point time;
+        double                                position; // mm along the toolpath
+    };
+    std::deque<Report>                    m_reports;
+    std::optional<double>                 m_shown_position;
 
     // Diagnostics, logged every few seconds.
     size_t                                m_stat_samples{ 0 };
     size_t                                m_stat_matched{ 0 };
+    size_t                                m_stat_resyncs{ 0 };
     std::string                           m_stat_last;
     std::chrono::steady_clock::time_point m_stat_start{ std::chrono::steady_clock::now() };
 };

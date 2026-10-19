@@ -120,20 +120,27 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
       (idle: X10 Y10 Z50) and extrude speed (3 mm/s) OK. Log lines:
       `CrealityPrinterSocket`.
       2026-10-17: the dialog showed "Â°C" (UTF-8 `°` read as ANSI by MSVC); fixed with
-      `degrees_celsius()` (explicit UTF-8 bytes). Compiled but **not installed yet**: close the
-      app, run the `install` target, restart. Same trap applies to any non-ASCII literal.
+      `degrees_celsius()` (explicit UTF-8 bytes), installed 2026-10-19. Same trap applies to
+      any non-ASCII literal.
 - [x] Live preview — **follows the real KE as of 2026-10-16** (`CrealityPrinterPositionSource`;
       address = env `CREALITY_LIVE_PRINTER_IP` or the last LAN printer opened in the
       Device tab, stored as app config `live_print_printer_address`; falls back to the
       simulation). The 2026-10-15 failure was a **locale bug**: `sscanf("%lf")`/`stod`/`strtod`
       follow the system locale and reject "133.97" under a decimal-comma locale. Use
       `std::from_chars` for printer numbers (fixed in LivePrintTracker and ChangeMaterialDialog).
-      2026-10-17: the index glide was jerky (long walls = 1 move; matcher jumped layers).
-      Now time-based: `PrintPositionMatcher` returns a print time (move + fraction along
-      it), searches only layers within ±1 of the printer's `layer`, never goes backwards;
-      `LivePrintTracker::on_timer` runs a display clock at real speed steered to the matched
-      time (extrapolates ≤0.5 s between ~4 reports/s). **Built but not yet confirmed by eye
-      on the KE** (the version installed 2026-10-17 evening has it; check smoothness first).
+      2026-10-19: rewritten after two failed attempts (index glide, then a time-based clock —
+      feedrate-only time estimates were ~5x too fast, so it stalled and lurched). Now
+      **"good enough"** on the KE: 85–100% of reports match, no resyncs in steady printing.
+      How it works: `PrintPositionMatcher` maps each report to mm along the toolpath
+      (`m_length`), matching **XY only** (printer Z is off by bed mesh/z-hops), searching
+      15 mm behind to well ahead of a prediction from the learned nozzle speed, and
+      preferring the printer's layer: **KE `layer` is 1-based = slicer `layer_id` + 1**
+      (neighbouring layers share XY paths, so without this it followed the layer below).
+      `LivePrintTracker` shows where the nozzle was 0.8 s ago, interpolated along the path
+      between reports; burst reports are spread ≥0.15 s apart. Known limits: ~0.8 s lag;
+      printer report stalls >~1 s still pause it; the preview draws whole G-code moves, so a
+      long straight line appears in one step (fix would be a marker drawn inside the move).
+      `MoveVertex::time` is the move index, not a duration — don't use it for timing.
       Limits: the preview must be the unchanged slice of the file being printed; changing
       slice settings (e.g. adding a filament) discards the G-code, so nothing moves until
       re-sliced, and the new slice no longer matches the print. Idea: show "waiting for a
