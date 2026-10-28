@@ -976,7 +976,9 @@ bool IMSlider::vertical_slider(const char* str_id, int* higher_value, int* lower
     // set mouse active region.
     ImRect active_region = draw_region;
     if (view_type == GLCanvas3D::CanvasPreview) {
-        active_region.Min = draw_region.Max - config.getWindowSize(DispConfig::e_wt_slider, scale);
+        // The slider column on the right of the window, over the full height (the slider is
+        // stretched to the canvas height in Preview).
+        active_region.Min = ImVec2(draw_region.Max.x - config.getWindowSize(DispConfig::e_wt_slider, scale).x, draw_region.Min.y);
     }
 
     const ImU32 white_bg = m_is_dark ? BACKGROUND_COLOR_DARK : BACKGROUND_COLOR_LIGHT;
@@ -1562,7 +1564,8 @@ bool IMSlider::render(int canvas_width, int canvas_height)
         ImVec2 slider_size = config.getWindowSize(tp, scale);
         
         const float remain_h = canvas_height - slider_pos.y - 115 * scale;
-        if (remain_h < slider_size.y) {
+        // In Preview the layer slider uses all the height there is, so it can be positioned finely.
+        if (remain_h < slider_size.y || view_type == GLCanvas3D::CanvasPreview) {
             slider_size.y = remain_h;
         }
         const float bias_x = 0.84f;
@@ -1577,12 +1580,32 @@ bool IMSlider::render(int canvas_width, int canvas_height)
             std::string lower_label = get_label(m_lower_value);
             int temp_higher_value = higher_value;
             int temp_lower_value = lower_value;
+            const ImVec2 slider_origin = ImGui::GetCursorScreenPos();
             if (vertical_slider("laysers_slider", &higher_value, &lower_value, higher_label, lower_label, GetMinValue(), GetMaxValue(),
                                 slider_size, m_selection, is_one_layer(), scale)) {
                 if (temp_higher_value != higher_value)
                     SetHigherValue(higher_value);
                 if (temp_lower_value != lower_value)
                     SetLowerValue(lower_value);
+            }
+
+            // Up / down buttons just left of the slider step one layer, like the Up / Down keys. They are
+            // drawn in the slider's own window: a separate window was covered by it, or took its focus
+            // (the slider only takes a right click, the pause / custom G-code menu, while focused).
+            if (view_type == GLCanvas3D::CanvasPreview) {
+                const float button_size = ImGui::GetFrameHeight();
+                const float slider_left = slider_origin.x + slider_size.x - config.getWindowSize(DispConfig::e_wt_slider, scale).x;
+                const float buttons_x   = slider_left - button_size - 2.0f * scale;
+                const float buttons_y   = slider_origin.y + slider_size.y * 0.5f - button_size - ImGui::GetStyle().ItemSpacing.y * 0.5f;
+                int step = 0;
+                ImGui::SetCursorScreenPos(ImVec2(buttons_x, buttons_y));
+                if (ImGui::ArrowButton("layer_step_up", ImGuiDir_Up))
+                    step = 1;
+                ImGui::SetCursorScreenPos(ImVec2(buttons_x, ImGui::GetCursorScreenPos().y));
+                if (ImGui::ArrowButton("layer_step_down", ImGuiDir_Down))
+                    step = -1;
+                if (step != 0)
+                    step_layer(step);
             }
         }, cfg);
 
@@ -1604,6 +1627,26 @@ bool IMSlider::render(int canvas_width, int canvas_height)
 
     }
     return ret;
+}
+
+void IMSlider::step_layer(int delta)
+{
+    // Same as the Up / Down keys in Preview: moving by hand takes over from the live print preview.
+    GLCanvas3D* canvas = wxGetApp().plater()->get_preview_canvas3D();
+    if (canvas != nullptr)
+        canvas->stop_live_print_follow();
+    if (GetSelection() == ssLower) {
+        SetLowerValue(GetLowerValue() + delta);
+    } else {
+        SetHigherValue(GetHigherValue() + delta);
+        if (canvas != nullptr)
+            if (IMSlider* moves = canvas->get_gcode_viewer().get_moves_slider())
+                moves->SetHigherValue(moves->GetMaxValue());
+        if (is_one_layer()) {
+            SetLowerValue(GetHigherValue());
+            m_selection = ssHigher;
+        }
+    }
 }
 
 bool IMSlider::is_dirty()

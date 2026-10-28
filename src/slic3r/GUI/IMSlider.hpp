@@ -121,6 +121,8 @@ public:
     bool check_ticks_changed_event(Type type);
     bool switch_one_layer_mode();
     void show_go_to_layer(bool show);
+    // Moves the selected thumb by delta layers (the step buttons next to the slider).
+    void step_layer(int delta);
 
     bool render(int canvas_width, int canvas_height);
 

@@ -158,6 +158,11 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
       `CREALITY_LIVE_SIM_SPEED` (default real time). Not yet checked on screen
       that following looks right. Next: real source from the KE (`curPosition`).
 
+- [ ] Preview layer slider (2026-10-27): stretched to the full canvas height, with ▲/▼ buttons
+      left of it that step one layer (`IMSlider::step_layer`, drawn inside the slider's own ImGui
+      window — a separate window either sat under it or stole its focus, which broke the
+      right-click pause menu). Installed; buttons + right-click after a step not yet confirmed.
+
 ## Code map
 
 - **Device tab is a prebuilt web bundle**, not C++: `resources/web/deviceMgr/`
@@ -221,6 +226,9 @@ and restart the app to load. No JS runtime on the PCs, so they were checked by e
   ~48). Keep preset speeds out of it; half-speeds (~25) may excite it weakly. User presets
   (`%APPDATA%\Creality\Creality Print\7.3\user\<id>\process|filament\base`, copies in
   `Documents\CrealityPrint-*-presets`) were tuned for this on 2026-10-19.
+- Filament presets don't carry Ulrich's name (process presets do). 2026-10-27: added
+  "eSUN ABS-CF @Creality Ender-3 V3 KE 0.4 nozzle" (260/265 °C, 15 mm³/s; use with the Ulrich ABS
+  process). The KE profile says brass nozzle — CF needs a hardened steel one.
 
 ## Notes
 
