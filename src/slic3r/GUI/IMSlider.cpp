@@ -2116,7 +2116,19 @@ std::string IMSlider::get_label(int tick, LabelType label_type)
             size_t layer_number;
             layer_number = m_draw_mode == dmSequentialFffPrint ? (m_values.empty() ? value : value + 1) : m_is_wipe_tower ? get_layer_number(value, label_type) + 1 : (m_values.empty() ? value : value + 1);
             ::sprintf(buffer, "%5s\n%5s", std::to_string(layer_number).c_str(), layer_height);
-            return std::string(buffer);
+            std::string label(buffer);
+            // Third line: how long this one layer takes to print (m_layers_times is cumulative).
+            const size_t time_idx = m_is_wipe_tower ? get_layer_number(value, ltEstimatedTime) : value;
+            if (m_draw_mode != dmSequentialFffPrint && time_idx < m_layers_times.size()) {
+                const double layer_s = m_layers_times[time_idx] - (time_idx > 0 ? m_layers_times[time_idx - 1] : 0.0);
+                const int    secs    = int(std::lround(std::max(layer_s, 0.0)));
+                if (secs < 60)
+                    ::sprintf(buffer, "%5s", (std::to_string(secs) + "s").c_str());
+                else
+                    ::sprintf(buffer, "%dm %02ds", secs / 60, secs % 60);
+                label += "\n" + std::string(buffer);
+            }
+            return label;
         }
     }
     return "";
