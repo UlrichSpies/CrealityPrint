@@ -1188,7 +1188,9 @@ bool IMSlider::vertical_slider(const char* str_id, int* higher_value, int* lower
         } else if (view_type == GLCanvas3D::CanvasPreview) {
 
             draw_higher_label();
-            draw_lower_label();
+            // The lower handle's label only matters once it's moved off the first layer.
+            if (!is_lower_at_min())
+                draw_lower_label();
         }
         
 

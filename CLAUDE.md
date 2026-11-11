@@ -163,7 +163,8 @@ script called as `.\build_release_vs2022.bat` so cmd finds it):
       window — a separate window either sat under it or stole its focus, which broke the
       right-click pause menu). Installed; buttons + right-click after a step not yet confirmed.
       2026-11-10: the handle label has a third line with that layer's own print time (from the
-      cumulative `m_layers_times`, in `IMSlider::get_label`). Compiled, not yet installed/seen.
+      cumulative `m_layers_times`, in `IMSlider::get_label`). Works (seen 2026-11-11). The lower
+      handle's label is hidden while that handle is at layer 1.
 
 ## Code map
 
